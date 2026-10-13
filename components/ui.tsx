@@ -171,7 +171,7 @@ export function Switch({ checked, onChange, label, hint }: { checked: boolean; o
       >
         <span
           className={cx(
-            "absolute top-[2px] size-[14px] rounded-full shadow transition-transform",
+            "absolute left-0 top-[2px] size-[14px] rounded-full shadow transition-transform",
             checked ? "translate-x-[16px] bg-bg" : "translate-x-[2px] bg-muted",
           )}
         />

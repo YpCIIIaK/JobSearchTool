@@ -161,16 +161,23 @@ interface Llm {
 
 export function llmFor(s: Settings): Llm {
   if (s.aiProvider === "custom") {
-    if (!s.aiBaseUrl || !s.aiCustomModel) throw new Error("Укажите адрес API и модель своего провайдера в настройках");
+    const list = s.aiCustomModels.map((m) => m.trim()).filter(Boolean);
+    if (!s.aiBaseUrl || !list.length) throw new Error("Укажите адрес API и хотя бы одну модель своего провайдера в настройках");
     const base = s.aiBaseUrl.replace(/\/+$/, "");
     return {
-      models: [s.aiCustomModel],
+      models: Array.from(new Set(list)),
       call: (model, content, maxTokens) => chat(`${base}/chat/completions`, s.aiApiKey, model, content, maxTokens),
     };
   }
   if (!s.openrouterKey) throw new Error("Добавьте ключ OpenRouter в настройках (бесплатно: openrouter.ai/keys)");
   return {
-    models: Array.from(new Set([s.aiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS])),
+    // Свои модели по приоритету; встроенные бесплатные — последним запасом, если разрешено
+    models: Array.from(
+      new Set([
+        ...s.aiModels.map((m) => m.trim()).filter(Boolean),
+        ...(s.aiBuiltinFallback || !s.aiModels.some((m) => m.trim()) ? FALLBACK_MODELS : []),
+      ]),
+    ),
     call: (model, content, maxTokens) =>
       chat("https://openrouter.ai/api/v1/chat/completions", s.openrouterKey, model, content, maxTokens, {
         "HTTP-Referer": "http://localhost:3100",

@@ -92,14 +92,15 @@ export interface Settings {
   linkedinLocations: string[];
   atsCompanies: string[]; // "greenhouse:gitlab", "lever:toptal", "ashby:linear"
   openrouterKey: string;
-  aiModel: string;
+  aiModels: string[]; // OpenRouter: модели по приоритету — первая основная, остальные запасные (любые слаги)
+  aiBuiltinFallback: boolean; // если все свои модели упали — пробовать встроенные бесплатные
   profile: string; // резюме / о себе для ИИ
   aiAutoTop: number; // сколько лучших анализировать автоматически после скана
   aiRejectRules: string[]; // правила отсева своими словами: ИИ скрывает вакансию, если нашёл нарушение
   aiProvider: "openrouter" | "custom"; // custom — любой OpenAI-совместимый API (OpenAI, Anthropic, Groq, Ollama…)
   aiBaseUrl: string;
   aiApiKey: string;
-  aiCustomModel: string;
+  aiCustomModels: string[]; // свой API: модели по приоритету
   language: "ru" | "en";
 }
 
@@ -164,14 +165,15 @@ export const DEFAULT_SETTINGS: Settings = {
     "ashby:mystenlabs", "ashby:keyrock", "ashby:safe", "ashby:magiceden", "ashby:consensys",
   ],
   openrouterKey: "",
-  aiModel: "openrouter/free",
+  aiModels: ["openrouter/free"],
+  aiBuiltinFallback: true,
   profile: "",
   aiAutoTop: 0,
   aiRejectRules: [],
   aiProvider: "openrouter",
   aiBaseUrl: "",
   aiApiKey: "",
-  aiCustomModel: "",
+  aiCustomModels: [],
   language: "ru",
 };
 

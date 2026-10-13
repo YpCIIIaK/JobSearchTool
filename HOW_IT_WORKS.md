@@ -70,7 +70,7 @@
 | Что | Где настроить | Где хранится |
 |---|---|---|
 | Резюме, ключевые и стоп-слова, правила отсева | Настройки | `data/db.json` |
-| ИИ: OpenRouter (бесплатно) или свой API (OpenAI, Anthropic, Groq, DeepSeek, Ollama) | Настройки → Резюме и ИИ | ключи только в `data/db.json` |
+| ИИ: OpenRouter или свой API (OpenAI, Anthropic, Groq, DeepSeek, Ollama). Модели — списком по приоритету, любой слаг (бесплатный или платный): если основная не ответила, берётся следующая | Настройки → Резюме и ИИ | ключи только в `data/db.json` |
 | Площадки, страны hh, локации LinkedIn | Настройки → Площадки | `data/db.json` |
 | Компании на Greenhouse / Lever / Ashby | Настройки → Площадки → «Сайты компаний» (кнопка «Найти» подбирает новые) | `data/db.json` |
 
@@ -118,6 +118,6 @@ lib/
 2. **Scoring** (`lib/score.ts`) gives each job a 0–100 score from keyword matches, seniority and freshness. Exclusion words drop a job entirely. The geo check answers whether the job is workable from Kazakhstan (`ok` / `maybe` / `no`). Duplicates across sources are merged by title + company.
 3. **AI check** (`lib/ai.ts`, `lib/analyze.ts`) produces a score, a verdict, pros and cons, the stack and Kazakhstan eligibility, and applies your plain-language reject rules. A job is hidden only with a quoted proof from its text. Free-tier limits are saved three ways: a cheap rules-only prescreen (10 jobs per call), full checks in batches of 5, and a cache keyed by title + company, invalidated when your resume or rules change. The final rank is `0.7 × AI + 0.3 × keywords`.
 4. **Cover letter.** Written per job in the job's language, together with answers to common form questions. It uses only facts from your resume and marks missing facts as `[уточнить: …]`.
-5. **Configuration and storage.** Everything (resume, rules, sources, API keys) is configured in Settings and stored in `data/db.json`, which is git-ignored. AI providers: OpenRouter (free) or any OpenAI-compatible API (OpenAI, Anthropic, Groq, DeepSeek, Ollama).
+5. **Configuration and storage.** Everything (resume, rules, sources, API keys) is configured in Settings and stored in `data/db.json`, which is git-ignored. AI providers: OpenRouter or any OpenAI-compatible API (OpenAI, Anthropic, Groq, DeepSeek, Ollama). Models are an ordered list of any slugs, free or paid, and the next one is tried when one fails.
 
 **Adding a source:** create `lib/sources/<name>.ts` returning an array of jobs, then register it in `lib/sources/index.ts` and `lib/types.ts`.

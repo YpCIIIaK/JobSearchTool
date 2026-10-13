@@ -26,6 +26,7 @@ function load(): Db {
           ...DEFAULT_SETTINGS,
           ...parsed.settings,
           sources: { ...DEFAULT_SETTINGS.sources, ...parsed.settings?.sources },
+          ...migrateModels(parsed.settings as any),
         },
         jobs: parsed.jobs ?? {},
         aiCache: parsed.aiCache ?? {},
@@ -120,4 +121,14 @@ export function getLastScan(): ScanProgress | undefined {
 export function setLastScan(p: ScanProgress) {
   load().lastScan = p;
   save(true);
+}
+
+/** Раньше модель была одна (aiModel / aiCustomModel) — переносим в списки */
+function migrateModels(old: any): Partial<Settings> {
+  if (!old) return {};
+  const out: Partial<Settings> = {};
+  if (!Array.isArray(old.aiModels) && typeof old.aiModel === "string" && old.aiModel) out.aiModels = [old.aiModel];
+  if (!Array.isArray(old.aiCustomModels) && typeof old.aiCustomModel === "string" && old.aiCustomModel)
+    out.aiCustomModels = [old.aiCustomModel];
+  return out;
 }

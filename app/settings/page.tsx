@@ -3,6 +3,7 @@
 import { triggerScan } from "@/components/Header";
 import { IconCheck, IconKey, IconLayers, IconSpark, IconTarget, IconWrench } from "@/components/icons";
 import { Btn, ChipsInput, cx, inputCls, Segmented, Switch } from "@/components/ui";
+import ModelList, { CatalogModel } from "@/components/ModelList";
 import type { ProfileSuggestion } from "@/lib/ai";
 import { Settings, SOURCE_LABELS, SourceId } from "@/lib/types";
 import { useRouter } from "next/navigation";
@@ -58,7 +59,7 @@ const SECTIONS = [
 
 export default function SettingsPage() {
   const [s, setS] = useState<Settings | null>(null);
-  const [models, setModels] = useState<{ id: string; name: string }[]>([]);
+  const [models, setModels] = useState<CatalogModel[]>([]);
   const [saved, setSaved] = useState<"idle" | "saving" | "done">("idle");
   const [dirty, setDirty] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -130,7 +131,16 @@ export default function SettingsPage() {
     try {
       const r = await fetch("/api/profile", {
         method: "POST",
-        body: JSON.stringify({ profile: s.profile, openrouterKey: s.openrouterKey, aiModel: s.aiModel }),
+        body: JSON.stringify({
+          profile: s.profile,
+          openrouterKey: s.openrouterKey,
+          aiModels: s.aiModels,
+          aiBuiltinFallback: s.aiBuiltinFallback,
+          aiProvider: s.aiProvider,
+          aiBaseUrl: s.aiBaseUrl,
+          aiApiKey: s.aiApiKey,
+          aiCustomModels: s.aiCustomModels,
+        }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error);
@@ -619,7 +629,7 @@ function ProviderSettings({
 }: {
   s: Settings;
   up: (p: Partial<Settings>) => void;
-  models: { id: string; name: string }[];
+  models: CatalogModel[];
 }) {
   return (
     <div className="space-y-5 pt-2">
@@ -653,16 +663,22 @@ function ProviderSettings({
           >
             <SecretInput value={s.openrouterKey} onChange={(v) => up({ openrouterKey: v })} placeholder="sk-or-v1-…" />
           </Field>
-          <Field label="Модель" hint="openrouter/free выбирает доступную сам. При ошибке пробуются запасные.">
-            <select value={s.aiModel} onChange={(e) => up({ aiModel: e.target.value })} className={inputCls}>
-              {!models.some((m) => m.id === s.aiModel) && <option value={s.aiModel}>{s.aiModel}</option>}
-              {models.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.id}
-                </option>
-              ))}
-            </select>
+        </div>
+      ) : null}
+      {s.aiProvider === "openrouter" ? (
+        <div className="space-y-3">
+          <Field
+            label="Модели"
+            hint="Любой слаг OpenRouter — бесплатный или платный. Если модель не ответила, берётся следующая по списку. Платные модели списывают кредиты с вашего баланса OpenRouter."
+          >
+            <ModelList value={s.aiModels} onChange={(v) => up({ aiModels: v })} catalog={models} />
           </Field>
+          <Switch
+            checked={s.aiBuiltinFallback}
+            onChange={(v) => up({ aiBuiltinFallback: v })}
+            label="Последний запас — встроенные бесплатные модели"
+            hint="Если все модели из списка упали, попробовать openrouter/free, Gemma и Nemotron."
+          />
         </div>
       ) : (
         <div className="space-y-4 rounded-xl border border-line p-4 bg-panel">
@@ -673,7 +689,9 @@ function ProviderSettings({
                 <button
                   key={p.label}
                   type="button"
-                  onClick={() => up({ aiBaseUrl: p.url, ...(p.model && !s.aiCustomModel ? { aiCustomModel: p.model } : {}) })}
+                  onClick={() =>
+                    up({ aiBaseUrl: p.url, ...(p.model && !s.aiCustomModels.length ? { aiCustomModels: [p.model] } : {}) })
+                  }
                   className={cx(
                     "h-7 px-2.5 rounded-md text-[12.5px] border transition-colors",
                     s.aiBaseUrl === p.url ? "bg-fg text-bg border-fg" : "border-line-strong/80 text-fg-2 hover:border-faint",
@@ -692,19 +710,12 @@ function ProviderSettings({
               className={cx(inputCls, "font-mono text-[12.5px]")}
             />
           </Field>
-          <div className="grid sm:grid-cols-2 gap-5">
-            <Field label="Ключ API" hint="Для Ollama не нужен.">
-              <SecretInput value={s.aiApiKey} onChange={(v) => up({ aiApiKey: v })} placeholder="sk-…" />
-            </Field>
-            <Field label="Модель" hint="Точное имя модели у провайдера.">
-              <input
-                value={s.aiCustomModel}
-                onChange={(e) => up({ aiCustomModel: e.target.value.trim() })}
-                placeholder="claude-haiku-5-5"
-                className={cx(inputCls, "font-mono text-[12.5px]")}
-              />
-            </Field>
-          </div>
+          <Field label="Ключ API" hint="Для Ollama не нужен.">
+            <SecretInput value={s.aiApiKey} onChange={(v) => up({ aiApiKey: v })} placeholder="sk-…" />
+          </Field>
+          <Field label="Модели" hint="Точные имена моделей у провайдера, по приоритету: первая основная, остальные запасные.">
+            <ModelList value={s.aiCustomModels} onChange={(v) => up({ aiCustomModels: v })} placeholder="claude-haiku-5-5" />
+          </Field>
           <p className="text-[12px] text-muted leading-snug">
             Платные API отвечают быстрее и стабильнее бесплатных. Ключ хранится только локально в data/db.json.
           </p>
