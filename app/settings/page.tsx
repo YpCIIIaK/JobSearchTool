@@ -14,6 +14,8 @@ const SOURCE_GROUPS: { title: string; items: { id: SourceId; note: string }[] }[
     items: [
       { id: "hh", note: "Публичные страницы hh.kz / hh.ru, без входа, с паузами" },
       { id: "habr", note: "Русскоязычные IT-вакансии с удалёнкой" },
+      { id: "getmatch", note: "IT-вакансии с точными форматами и странами" },
+      { id: "djinni", note: "Официальная RSS, много удалёнки для СНГ" },
     ],
   },
   {
@@ -242,31 +244,7 @@ export default function SettingsPage() {
               </div>
             )}
 
-            <div className="grid sm:grid-cols-2 gap-5 pt-2">
-              <Field
-                label="Ключ OpenRouter"
-                hint={
-                  <>
-                    Бесплатно на{" "}
-                    <a className="underline decoration-accent underline-offset-2 text-fg-2" href="https://openrouter.ai/keys" target="_blank" rel="noreferrer">
-                      openrouter.ai/keys
-                    </a>
-                  </>
-                }
-              >
-                <SecretInput value={s.openrouterKey} onChange={(v) => up({ openrouterKey: v })} placeholder="sk-or-v1-…" />
-              </Field>
-              <Field label="Модель" hint="openrouter/free выбирает доступную сам. При ошибке пробуются запасные.">
-                <select value={s.aiModel} onChange={(e) => up({ aiModel: e.target.value })} className={inputCls}>
-                  {!models.some((m) => m.id === s.aiModel) && <option value={s.aiModel}>{s.aiModel}</option>}
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
+            <ProviderSettings s={s} up={up} models={models} />
             <Field
               label="Проверять ИИ сразу после скана"
               hint="Сколько лучших новых вакансий ИИ проверит автоматически после каждого скана. Остальные — кнопкой «Проверить ИИ» в списке."
@@ -416,6 +394,10 @@ export default function SettingsPage() {
                 }
               >
                 <ChipsInput value={s.atsCompanies} onChange={(v) => up({ atsCompanies: v })} placeholder="ashby:linear" />
+                <DiscoverCompanies
+                  known={s.atsCompanies}
+                  onAdd={(ids) => up({ atsCompanies: Array.from(new Set([...s.atsCompanies, ...ids])) })}
+                />
               </Field>
               {s.sources.telegram && (
                 <Field label="Telegram-каналы" hint="Имена публичных каналов без @.">
@@ -614,6 +596,213 @@ function RulesEditor({ value, onChange }: { value: string[]; onChange: (v: strin
               </button>
             ))}
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────── Провайдер ИИ ───────── */
+
+const PRESETS: { label: string; url: string; model?: string }[] = [
+  { label: "OpenAI", url: "https://api.openai.com/v1" },
+  { label: "Anthropic", url: "https://api.anthropic.com/v1", model: "claude-haiku-5-5" },
+  { label: "Groq", url: "https://api.groq.com/openai/v1" },
+  { label: "DeepSeek", url: "https://api.deepseek.com/v1" },
+  { label: "Ollama (локально)", url: "http://localhost:11434/v1" },
+];
+
+function ProviderSettings({
+  s,
+  up,
+  models,
+}: {
+  s: Settings;
+  up: (p: Partial<Settings>) => void;
+  models: { id: string; name: string }[];
+}) {
+  return (
+    <div className="space-y-5 pt-2">
+      <Field label="Провайдер ИИ">
+        <Segmented
+          value={s.aiProvider}
+          onChange={(v) => up({ aiProvider: v })}
+          options={[
+            { value: "openrouter", label: "OpenRouter — бесплатно" },
+            { value: "custom", label: "Свой API" },
+          ]}
+        />
+      </Field>
+      {s.aiProvider === "openrouter" ? (
+        <div className="grid sm:grid-cols-2 gap-5">
+          <Field
+            label="Ключ OpenRouter"
+            hint={
+              <>
+                Бесплатно на{" "}
+                <a
+                  className="underline decoration-accent underline-offset-2 text-fg-2"
+                  href="https://openrouter.ai/keys"
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  openrouter.ai/keys
+                </a>
+              </>
+            }
+          >
+            <SecretInput value={s.openrouterKey} onChange={(v) => up({ openrouterKey: v })} placeholder="sk-or-v1-…" />
+          </Field>
+          <Field label="Модель" hint="openrouter/free выбирает доступную сам. При ошибке пробуются запасные.">
+            <select value={s.aiModel} onChange={(e) => up({ aiModel: e.target.value })} className={inputCls}>
+              {!models.some((m) => m.id === s.aiModel) && <option value={s.aiModel}>{s.aiModel}</option>}
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+      ) : (
+        <div className="space-y-4 rounded-xl border border-line p-4 bg-panel">
+          <div>
+            <p className="eyebrow mb-2">Быстрая настройка</p>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  onClick={() => up({ aiBaseUrl: p.url, ...(p.model && !s.aiCustomModel ? { aiCustomModel: p.model } : {}) })}
+                  className={cx(
+                    "h-7 px-2.5 rounded-md text-[12.5px] border transition-colors",
+                    s.aiBaseUrl === p.url ? "bg-fg text-bg border-fg" : "border-line-strong/80 text-fg-2 hover:border-faint",
+                  )}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <Field label="Адрес API" hint="Любой OpenAI-совместимый эндпоинт — к нему добавится /chat/completions.">
+            <input
+              value={s.aiBaseUrl}
+              onChange={(e) => up({ aiBaseUrl: e.target.value.trim() })}
+              placeholder="https://api.openai.com/v1"
+              className={cx(inputCls, "font-mono text-[12.5px]")}
+            />
+          </Field>
+          <div className="grid sm:grid-cols-2 gap-5">
+            <Field label="Ключ API" hint="Для Ollama не нужен.">
+              <SecretInput value={s.aiApiKey} onChange={(v) => up({ aiApiKey: v })} placeholder="sk-…" />
+            </Field>
+            <Field label="Модель" hint="Точное имя модели у провайдера.">
+              <input
+                value={s.aiCustomModel}
+                onChange={(e) => up({ aiCustomModel: e.target.value.trim() })}
+                placeholder="claude-haiku-5-5"
+                className={cx(inputCls, "font-mono text-[12.5px]")}
+              />
+            </Field>
+          </div>
+          <p className="text-[12px] text-muted leading-snug">
+            Платные API отвечают быстрее и стабильнее бесплатных. Ключ хранится только локально в data/db.json.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ───────── Автопоиск компаний ───────── */
+
+interface Found {
+  id: string;
+  name: string;
+  remote: number;
+  sample: string[];
+  matched: number;
+  from: "link" | "name";
+}
+
+function DiscoverCompanies({ known, onAdd }: { known: string[]; onAdd: (ids: string[]) => void }) {
+  const [state, setState] = useState<"idle" | "busy" | "done">("idle");
+  const [found, setFound] = useState<Found[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setState("busy");
+    setError(null);
+    try {
+      const r = await fetch("/api/discover", { method: "POST" });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error);
+      setFound(j.companies);
+      setState("done");
+    } catch (e: any) {
+      setError(e.message);
+      setState("idle");
+    }
+  };
+  const fresh = found.filter((c) => !known.includes(c.id));
+  return (
+    <div className="mt-3 rounded-xl border border-dashed border-line-strong p-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex-1 min-w-48">
+          <p className="text-[13.5px] font-medium">Найти новые компании</p>
+          <p className="text-[12.5px] text-muted mt-0.5 leading-snug">
+            По ссылкам в собранных вакансиях и по компаниям из ваших лучших совпадений. Каждую проверяем через официальный API и
+            предлагаем только тех, у кого сейчас открыта удалёнка.
+          </p>
+        </div>
+        <Btn onClick={run} disabled={state === "busy"}>
+          {state === "busy" ? "Ищу… до пары минут" : state === "done" ? "Искать снова" : "Найти"}
+        </Btn>
+      </div>
+      {error && <p className="mt-3 text-[13px] text-bad">{error}</p>}
+      {state === "done" && (
+        <div className="mt-4">
+          {fresh.length === 0 ? (
+            <p className="text-[13px] text-muted">
+              Новых компаний с открытой удалёнкой не нашлось. После следующего скана появятся новые ссылки.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-2">
+                <span className="eyebrow">Найдено {fresh.length}</span>
+                <button
+                  type="button"
+                  onClick={() => onAdd(fresh.map((c) => c.id))}
+                  className="text-[12.5px] text-fg underline decoration-accent underline-offset-2"
+                >
+                  Добавить все
+                </button>
+              </div>
+              <ul className="divide-y divide-line rounded-lg border border-line bg-panel">
+                {fresh.map((c) => (
+                  <li key={c.id} className="flex items-start gap-3 px-3 py-2.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[13.5px] font-medium">
+                        {c.name} <span className="font-mono text-[11.5px] text-faint font-normal">{c.id}</span>
+                      </p>
+                      <p className="text-[12px] text-muted mt-0.5 truncate">
+                        <span className="num">{c.remote}</span> удалённых
+                        {c.matched > 0 && (
+                          <>
+                            {" "}
+                            · <span className="text-good num">{c.matched}</span> по вашим словам
+                          </>
+                        )}{" "}
+                        · {c.sample.join(" · ")}
+                      </p>
+                    </div>
+                    <Btn size="sm" onClick={() => onAdd([c.id])}>
+                      Добавить
+                    </Btn>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
         </div>
       )}
     </div>

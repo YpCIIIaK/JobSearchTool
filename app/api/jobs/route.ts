@@ -15,7 +15,7 @@ export async function GET(req: Request) {
   const minScore = Number(sp.get("minScore") ?? 0);
   const check = sp.get("check") ?? ""; // done — проверены ИИ, todo — не проверены или проверка устарела
   const sort = sp.get("sort") ?? "rank";
-  const salary = sp.get("salary") === "1";
+  const salary = sp.get("salary") ?? ""; // with — только с зарплатой, without — только без
 
   const all = allJobs();
   const counts = { new: 0, saved: 0, applied: 0, hidden: 0, total: all.length };
@@ -30,7 +30,9 @@ export async function GET(req: Request) {
     if (status === "active" ? j.status === "hidden" : j.status !== status) return false;
     if (geo && !geo.split(",").includes(j.geo)) return false;
     if (rank(j) < minScore) return false;
-    if (salary && !j.salary && !j.ai?.salary) return false;
+    const hasSalary = !!(j.salary || j.ai?.salary);
+    if (salary === "with" && !hasSalary) return false;
+    if (salary === "without" && hasSalary) return false;
     if (s.minSalaryUsd && j.salaryUsdMonth && j.salaryUsdMonth < s.minSalaryUsd) return false;
     if (q && !`${j.title} ${j.company} ${j.tags.join(" ")} ${j.location}`.toLowerCase().includes(q)) return false;
     sources[j.source] = (sources[j.source] ?? 0) + 1;

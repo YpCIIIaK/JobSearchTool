@@ -2,7 +2,7 @@ import { RawJob, Settings } from "../types";
 import { cleanHtml, decodeEntities, fetchJson, toIso } from "../util";
 
 // Вакансии прямо с карьерных страниц компаний через открытые API их ATS
-type Ats = "greenhouse" | "lever" | "ashby";
+export type Ats = "greenhouse" | "lever" | "ashby";
 
 const REMOTE = /remote|anywhere|worldwide|global|distributed|удал/i;
 
@@ -82,7 +82,7 @@ async function ashby(slug: string): Promise<RawJob[]> {
     }));
 }
 
-const FETCHERS: Record<Ats, (slug: string) => Promise<RawJob[]>> = { greenhouse, lever, ashby };
+export const FETCHERS: Record<Ats, (slug: string) => Promise<RawJob[]>> = { greenhouse, lever, ashby };
 
 export async function ats(s: Settings): Promise<RawJob[]> {
   const entries = s.atsCompanies

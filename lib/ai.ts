@@ -153,14 +153,46 @@ function extractJson(text: string): any {
   }
 }
 
-async function callModel(model: string, key: string, content: string, maxTokens = 1200): Promise<{ text: string; model: string }> {
-  const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+/** Доступ к модели: OpenRouter с запасными бесплатными моделями или свой OpenAI-совместимый API */
+interface Llm {
+  models: string[];
+  call(model: string, content: string, maxTokens?: number): Promise<{ text: string; model: string }>;
+}
+
+export function llmFor(s: Settings): Llm {
+  if (s.aiProvider === "custom") {
+    if (!s.aiBaseUrl || !s.aiCustomModel) throw new Error("Укажите адрес API и модель своего провайдера в настройках");
+    const base = s.aiBaseUrl.replace(/\/+$/, "");
+    return {
+      models: [s.aiCustomModel],
+      call: (model, content, maxTokens) => chat(`${base}/chat/completions`, s.aiApiKey, model, content, maxTokens),
+    };
+  }
+  if (!s.openrouterKey) throw new Error("Добавьте ключ OpenRouter в настройках (бесплатно: openrouter.ai/keys)");
+  return {
+    models: Array.from(new Set([s.aiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS])),
+    call: (model, content, maxTokens) =>
+      chat("https://openrouter.ai/api/v1/chat/completions", s.openrouterKey, model, content, maxTokens, {
+        "HTTP-Referer": "http://localhost:3100",
+        "X-Title": "JobSearchTool",
+      }),
+  };
+}
+
+async function chat(
+  url: string,
+  key: string,
+  model: string,
+  content: string,
+  maxTokens = 1200,
+  extra: Record<string, string> = {},
+): Promise<{ text: string; model: string }> {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${key}`,
+      ...(key ? { Authorization: `Bearer ${key}` } : {}),
       "Content-Type": "application/json",
-      "HTTP-Referer": "http://localhost:3000",
-      "X-Title": "JobFinder Local",
+      ...extra,
     },
     body: JSON.stringify({
       model,
@@ -179,28 +211,28 @@ async function callModel(model: string, key: string, content: string, maxTokens 
   return { text, model: data.model || model };
 }
 
-/** Бесплатные модели иногда отдают пустой ответ или временную ошибку провайдера — даём вторую попытку */
-async function callWithRetry(model: string, key: string, content: string, maxTokens: number) {
+/** Модели иногда отдают пустой ответ или временную ошибку провайдера — даём вторую попытку */
+async function callWithRetry(llm: Llm, model: string, content: string, maxTokens: number) {
   try {
-    return await callModel(model, key, content, maxTokens);
+    return await llm.call(model, content, maxTokens);
   } catch (e: any) {
     if (!/пустой ответ|Provider returned error|timeout|aborted|HTTP 5\d\d|429/i.test(e.message)) throw e;
     await new Promise((r) => setTimeout(r, 3000));
-    return callModel(model, key, content, maxTokens);
+    return llm.call(model, content, maxTokens);
   }
 }
 
 export async function analyzeJobs(jobs: Job[], s: Settings): Promise<Map<string, AiVerdict>> {
-  if (!s.openrouterKey) throw new Error("Добавьте ключ OpenRouter в настройках (бесплатно: openrouter.ai/keys)");
   if (!jobs.length) return new Map();
-  const models = Array.from(new Set([s.aiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS]));
+  const llm = llmFor(s);
+  const models = llm.models;
   const errors: string[] = [];
   const p = prompt(jobs, s);
   const ph = profileHash(s);
   const list = (v: any) => (Array.isArray(v) ? v.map(String).filter(Boolean).slice(0, 8) : []);
   for (const m of models) {
     try {
-      const { text, model } = await callWithRetry(m, s.openrouterKey, p, 900 * jobs.length + 400);
+      const { text, model } = await callWithRetry(llm, m, p, 900 * jobs.length + 400);
       const j = extractJson(text);
       // Модели иногда возвращают один объект вместо массива, если вакансия одна
       const results: any[] = Array.isArray(j.results) ? j.results : Array.isArray(j) ? j : [j];
@@ -248,7 +280,6 @@ export interface ProfileSuggestion {
 
 /** Разбирает резюме и предлагает настройки поиска */
 export async function extractProfile(s: Settings): Promise<ProfileSuggestion> {
-  if (!s.openrouterKey) throw new Error("Добавьте ключ OpenRouter (бесплатно: openrouter.ai/keys)");
   if (s.profile.trim().length < 40) throw new Error("Вставьте резюме в поле профиля — сейчас оно почти пустое");
   const p = `Ты — IT-рекрутер. Ниже резюме кандидата из Казахстана, который ищет удалённую работу на зарубежных и русскоязычных площадках.
 Подбери настройки для поиска вакансий.
@@ -267,14 +298,15 @@ ${s.profile.slice(0, 12000)}
 
 Ответь СТРОГО одним JSON-объектом без markdown:
 {"keywords":[],"mustHave":[],"exclude":[],"seniority":[],"minSalaryUsd":0,"roles":[],"note":""}`;
-  const models = Array.from(new Set([s.aiModel || FALLBACK_MODELS[0], ...FALLBACK_MODELS]));
+  const llm = llmFor(s);
+  const models = llm.models;
   const errors: string[] = [];
   const LEVELS = ["intern", "junior", "middle", "senior", "lead"];
   const list = (v: any, n: number) =>
     Array.isArray(v) ? Array.from(new Set(v.map((x) => String(x).trim().toLowerCase()).filter(Boolean))).slice(0, n) : [];
   for (const m of models) {
     try {
-      const { text, model } = await callModel(m, s.openrouterKey, p);
+      const { text, model } = await callWithRetry(llm, m, p, 1200);
       const j = extractJson(text);
       const keywords = list(j.keywords, 8);
       if (!keywords.length) throw new Error(`${m}: не вернула ключевые слова`);
@@ -306,4 +338,118 @@ function parseReject(v: any, s: Settings): AiVerdict["reject"] {
   // Без цитаты-доказательства не отсеиваем: защита от галлюцинаций
   if (!rule || quote.length < 3) return;
   return { rule, quote: quote.slice(0, 220) };
+}
+
+/** Сколько вакансий за один запрос предфильтра: ответ короткий, поэтому пачка крупнее */
+export const PRESCREEN_BATCH = 10;
+
+/**
+ * Быстрый предфильтр: только правила отсева, без оценки. Ответ — короткий список нарушений,
+ * поэтому стоит в разы меньше токенов, чем полная проверка.
+ * Возвращает id → нарушение (или undefined, если правила не нарушены).
+ */
+export async function prescreenJobs(jobs: Job[], s: Settings): Promise<Map<string, AiVerdict["reject"]>> {
+  const rules = s.aiRejectRules.map((r) => r.trim()).filter(Boolean);
+  const out = new Map<string, AiVerdict["reject"]>();
+  if (!rules.length || !jobs.length) return out;
+  const llm = llmFor(s);
+  const per = Math.min(2500, Math.floor(25000 / jobs.length));
+  const blocks = jobs
+    .map((j, i) => `### ВАКАНСИЯ ${i + 1}: ${j.title} — ${j.company || "компания не указана"}\n${condense(htmlToText(j.description), per)}`)
+    .join("\n\n");
+  const p = `Проверь вакансии ТОЛЬКО на нарушение правил отсева. Ничего не оценивай.
+
+ПРАВИЛА ОТСЕВА:
+${rules.map((r, i) => `${i + 1}. ${r}`).join("\n")}
+
+- Текст вакансии может быть на любом языке — понимай смысл («3+ years», «от 3 лет», «mindestens 3 Jahre»).
+- Нарушение — ТОЛЬКО при явном подтверждении в тексте. Нет информации или неоднозначно — не нарушено.
+- Для нарушения приведи точную цитату из вакансии на языке оригинала (до 150 символов).
+
+${blocks}
+
+Ответь СТРОГО JSON без markdown — только вакансии, которые нарушают правила (пустой список, если таких нет):
+{"rejected": [{"n": <номер вакансии>, "rule": <номер правила>, "quote": "<цитата>"}]}`;
+  const errors: string[] = [];
+  for (const m of llm.models) {
+    try {
+      const { text } = await callWithRetry(llm, m, p, 150 * jobs.length + 300);
+      const j = extractJson(text);
+      const list: any[] = Array.isArray(j.rejected) ? j.rejected : Array.isArray(j.results) ? j.results : [];
+      for (const r of list) {
+        const job = jobs[Number(r.n) - 1];
+        const reject = parseReject(r, s);
+        if (job && reject) out.set(job.id, reject);
+      }
+      return out;
+    } catch (e: any) {
+      errors.push(e.message);
+      if (/401|user not found|invalid.*key|no auth/i.test(e.message)) break;
+    }
+  }
+  throw new Error(errors.join(" | "));
+}
+
+/**
+ * Сопроводительное письмо и ответы на типовые вопросы формы.
+ * Опирается только на факты из резюме — ничего не придумывает.
+ */
+export async function writeLetter(
+  job: Job,
+  s: Settings,
+  opts: { lang: "auto" | "ru" | "en"; note?: string },
+): Promise<{ text: string; answers: { q: string; a: string }[]; lang: string; model: string }> {
+  if (s.profile.trim().length < 40) throw new Error("Заполните резюме в настройках — письмо пишется по нему");
+  const llm = llmFor(s);
+  const ai = job.ai && !job.ai.quick ? job.ai : undefined;
+  const langRule =
+    opts.lang === "ru"
+      ? "Пиши на русском."
+      : opts.lang === "en"
+        ? "Write in English."
+        : "Пиши на языке текста вакансии (если вакансия на английском — по-английски, на русском — по-русски, на другом языке — по-английски).";
+  const p = `Ты помогаешь кандидату откликнуться на вакансию. Кандидат живёт в Казахстане (UTC+5) и работает удалённо.
+
+РЕЗЮМЕ КАНДИДАТА:
+${s.profile.slice(0, 8000)}
+
+ВАКАНСИЯ: ${job.title} — ${job.company || "компания не указана"}
+Локация: ${job.location}
+${job.salary ? `Зарплата: ${job.salary}` : ""}
+${condense(htmlToText(job.description), 6000)}
+${ai ? `\nРАЗБОР СООТВЕТСТВИЯ (от предыдущей проверки):\nСовпадает: ${ai.pros.join("; ")}\nРиски: ${ai.cons.join("; ")}` : ""}
+${opts.note ? `\nПОЖЕЛАНИЕ КАНДИДАТА К ПИСЬМУ: ${opts.note}` : ""}
+
+Задача 1 — сопроводительное письмо:
+- ${langRule}
+- 120–180 слов, 3–4 коротких абзаца, без заголовка и подписи-плейсхолдеров вроде [Имя].
+- Начни с конкретики: почему именно эта роль/компания (опирайся на детали вакансии), без «Я пишу, чтобы выразить интерес».
+- 2–3 самых релевантных факта из резюме под требования вакансии — с цифрами/проектами, если они есть в резюме.
+- Если есть явный пробел (например, опыта меньше требуемого) — не скрывай и не акцентируй; покажи, чем компенсируешь.
+- Упомяни удалёнку из Казахстана и пересечение часовых поясов, только если это уместно для вакансии. Точные факты о времени (не выдумывай другие): Казахстан UTC+5; с Европой (CET/CEST) пересечение около 4–5 часов рабочего дня, с Великобританией около 5 часов; с восточным побережьем США в рабочее время по КЗ пересечения нет (только если работать вечером по КЗ), с западным побережьем — нет.
+- Тон: уверенный, живой, без канцелярита и штампов («командный игрок», «стрессоустойчивость», «passionate»).
+- НЕ придумывай факты, которых нет в резюме: сроки выхода, рабочее место, интернет, гражданство, зарплатные ожидания, опыт с технологиями. Если для ответа нужен факт, которого нет в резюме, оставь пометку в квадратных скобках для кандидата, например [уточнить: когда можете выйти].
+
+Задача 2 — ответы на типовые вопросы формы отклика (на том же языке, что письмо), 3–5 вопросов, которые реально встречаются в таких формах: почему эта компания, ожидаемая зарплата (если в резюме есть ожидания — используй их; иначе пометка [уточнить: ожидаемая зарплата], можно с подсказкой по вилке вакансии), когда готов начать, опыт с ключевой технологией вакансии, часовой пояс/удалёнка. Ответы по 1–3 предложения. Те же правила: только факты из резюме и вакансии, недостающее — пометкой [уточнить: …].
+
+Ответь СТРОГО JSON без markdown:
+{"lang": "<код языка письма: ru/en/…>", "letter": "<текст письма, абзацы через \n\n>", "answers": [{"q": "<вопрос>", "a": "<ответ>"}]}`;
+  const errors: string[] = [];
+  for (const m of llm.models) {
+    try {
+      const { text, model } = await callWithRetry(llm, m, p, 1800);
+      const j = extractJson(text);
+      const letter = String(j.letter ?? "").trim();
+      if (letter.length < 80) throw new Error(`${m}: письмо получилось пустым`);
+      const answers = (Array.isArray(j.answers) ? j.answers : [])
+        .map((x: any) => ({ q: String(x.q ?? "").trim(), a: String(x.a ?? "").trim() }))
+        .filter((x: { q: string; a: string }) => x.q && x.a)
+        .slice(0, 6);
+      return { text: letter, answers, lang: String(j.lang ?? opts.lang).slice(0, 5), model };
+    } catch (e: any) {
+      errors.push(e.message);
+      if (/401|user not found|invalid.*key|no auth/i.test(e.message)) break;
+    }
+  }
+  throw new Error(errors.join(" | "));
 }

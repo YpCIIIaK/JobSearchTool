@@ -9,6 +9,8 @@ export type SourceId =
   | "habr"
   | "hh"
   | "linkedin"
+  | "djinni"
+  | "getmatch"
   | "ats"
   | "cryptojobslist"
   | "cryptocurrencyjobs"
@@ -32,6 +34,16 @@ export interface AiVerdict {
   at: string;
   profileHash?: string; // для кэша: оценка актуальна, пока не поменялось резюме
   reject?: { rule: string; quote: string }; // нарушенное правило отсева и цитата-доказательство из вакансии
+  quick?: boolean; // отсеяно быстрым предфильтром — полной оценки не было
+}
+
+export interface CoverLetter {
+  text: string;
+  answers: { q: string; a: string }[]; // ответы на типовые вопросы формы отклика
+  lang: string; // язык письма: ru / en / …
+  model: string;
+  at: string;
+  edited?: boolean; // правили вручную
 }
 
 export interface Job {
@@ -57,6 +69,7 @@ export interface Job {
   status: JobStatus;
   ai?: AiVerdict;
   hiddenBy?: "ai" | "user"; // кто скрыл: правило отсева ИИ или вы
+  letter?: CoverLetter;
   enriched?: boolean; // полное описание уже догружено со страницы вакансии
 }
 
@@ -83,6 +96,10 @@ export interface Settings {
   profile: string; // резюме / о себе для ИИ
   aiAutoTop: number; // сколько лучших анализировать автоматически после скана
   aiRejectRules: string[]; // правила отсева своими словами: ИИ скрывает вакансию, если нашёл нарушение
+  aiProvider: "openrouter" | "custom"; // custom — любой OpenAI-совместимый API (OpenAI, Anthropic, Groq, Ollama…)
+  aiBaseUrl: string;
+  aiApiKey: string;
+  aiCustomModel: string;
   language: "ru" | "en";
 }
 
@@ -97,6 +114,8 @@ export const SOURCE_LABELS: Record<SourceId, string> = {
   habr: "Хабр Карьера",
   hh: "hh.kz / hh.ru",
   linkedin: "LinkedIn",
+  djinni: "Djinni",
+  getmatch: "Getmatch",
   ats: "Сайты компаний (Greenhouse, Lever, Ashby)",
   cryptojobslist: "CryptoJobsList",
   cryptocurrencyjobs: "Cryptocurrency Jobs",
@@ -122,6 +141,8 @@ export const DEFAULT_SETTINGS: Settings = {
     habr: true,
     hh: true,
     linkedin: true,
+    djinni: true,
+    getmatch: true,
     ats: true,
     cryptojobslist: true,
     cryptocurrencyjobs: true,
@@ -147,6 +168,10 @@ export const DEFAULT_SETTINGS: Settings = {
   profile: "",
   aiAutoTop: 0,
   aiRejectRules: [],
+  aiProvider: "openrouter",
+  aiBaseUrl: "",
+  aiApiKey: "",
+  aiCustomModel: "",
   language: "ru",
 };
 

@@ -101,7 +101,7 @@ export function scoreJob(raw: RawJob, s: Settings): { score: number; matched: st
 
 // Площадки, чья гео-метка точная (список стран / регион поиска). Остальным пересчитываем по тексту,
 // иначе однажды вычисленное значение «залипает» как подсказка
-const GEO_AUTHORITATIVE = new Set(["himalayas", "hh"]);
+const GEO_AUTHORITATIVE = new Set(["himalayas", "hh", "getmatch"]);
 
 export function rescore(job: Job, s: Settings): Job {
   const r = scoreJob({ ...job, geo: GEO_AUTHORITATIVE.has(job.source) ? job.geo : undefined }, s);

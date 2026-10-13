@@ -4,6 +4,7 @@ import { Job, JobStatus, ScanProgress, SOURCE_LABELS, SourceId } from "@/lib/typ
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SCAN_EVENT, triggerScan } from "./Header";
+import LetterPanel from "./LetterPanel";
 import {
   IconArrowLeft,
   IconCheck,
@@ -42,7 +43,7 @@ type Filters = {
   minScore: number;
   sort: "rank" | "date" | "salary";
   check: "" | "done" | "todo";
-  salary: boolean;
+  salary: "" | "with" | "without";
 };
 
 const STATUS_TABS: { id: string; label: string; key?: JobStatus }[] = [
@@ -68,7 +69,7 @@ export default function JobsView() {
     minScore: 0,
     sort: "rank",
     check: "",
-    salary: false,
+    salary: "",
   });
   const [data, setData] = useState<ListResp | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -106,7 +107,7 @@ export default function JobsView() {
       minScore: String(filters.minScore),
       sort: filters.sort,
       check: filters.check,
-      salary: filters.salary ? "1" : "",
+      salary: filters.salary,
     });
     const r = await fetch(`/api/jobs?${p}`);
     setData(await r.json());
@@ -222,9 +223,10 @@ export default function JobsView() {
     // Берём следующие по текущему порядку списка, ещё не проверенные или с устаревшей проверкой
     const targets = jobs.filter((j) => j.aiState !== "done").slice(0, n).map((j) => j.id);
     setBulk({ done: 0, total: targets.length });
-    for (let i = 0; i < targets.length; i += 5) {
-      const ok = await analyzeMany(targets.slice(i, i + 5));
-      setBulk({ done: Math.min(targets.length, i + 5), total: targets.length });
+    // Пачка 10 за запрос: сервер сначала прогоняет её через быстрый предфильтр правил, затем полную проверку по 5
+    for (let i = 0; i < targets.length; i += 10) {
+      const ok = await analyzeMany(targets.slice(i, i + 10));
+      setBulk({ done: Math.min(targets.length, i + 10), total: targets.length });
       if (!ok) break;
     }
     setBulk(null);
@@ -288,7 +290,7 @@ export default function JobsView() {
       f={f}
       sources={data?.sources ?? {}}
       checks={data?.checks}
-      onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: false })}
+      onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: "" })}
       activeCount={activeFilters}
     />
   );
@@ -383,7 +385,7 @@ export default function JobsView() {
               <p className="font-serif text-[22px]">Ничего не нашлось</p>
               <p className="text-[13px] text-muted mt-1.5">Ослабьте фильтры или измените запрос.</p>
               {activeFilters > 0 && (
-                <Btn className="mt-4" onClick={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: false })}>
+                <Btn className="mt-4" onClick={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: "" })}>
                   Сбросить фильтры
                 </Btn>
               )}
@@ -422,6 +424,7 @@ export default function JobsView() {
             <Detail
               job={detail}
               stale={jobs.find((j) => j.id === detail.id)?.aiState === "stale"}
+              onLetter={(letter) => patchLocal(detail.id, { letter })}
               analyzing={analyzing.has(detail.id)}
               onStatus={(s) => setStatus(detail.id, s)}
               onAnalyze={() => analyze(detail.id)}
@@ -546,10 +549,18 @@ function FilterPanel({
         ))}
       </FilterGroup>
 
-      <FilterGroup title="Показывать">
-        <div className="space-y-3 pt-1">
-          <Switch checked={filters.salary} onChange={(v) => f({ salary: v })} label="Только с зарплатой" />
-        </div>
+      <FilterGroup title="Зарплата">
+        {(
+          [
+            ["", "Все вакансии"],
+            ["with", "Указана"],
+            ["without", "Не указана"],
+          ] as const
+        ).map(([v, l]) => (
+          <Option key={v} checked={filters.salary === v} onClick={() => f({ salary: v })}>
+            {l}
+          </Option>
+        ))}
       </FilterGroup>
 
       <FilterGroup title="Площадки" aside={<span className="num text-[11px] text-faint">{sorted.length}</span>}>
@@ -775,6 +786,7 @@ function highlight(html: string, words: string[]): string {
 function Detail({
   job,
   stale,
+  onLetter,
   analyzing,
   onStatus,
   onAnalyze,
@@ -782,6 +794,7 @@ function Detail({
 }: {
   job: Job;
   stale?: boolean;
+  onLetter: (l: NonNullable<Job["letter"]>) => void;
   analyzing: boolean;
   onStatus: (s: JobStatus) => void;
   onAnalyze: () => void;
@@ -918,15 +931,23 @@ function Detail({
               </header>
               <div className="p-5 space-y-4">
                 <div className="flex items-start gap-4">
-                  <div className="text-center shrink-0">
-                    <div className={cx("num text-[34px] leading-none", ai.score >= 70 ? "text-good" : ai.score >= 45 ? "text-warn" : "text-muted")}>
-                      {ai.score}
+                  {!ai.quick && (
+                    <div className="text-center shrink-0">
+                      <div className={cx("num text-[34px] leading-none", ai.score >= 70 ? "text-good" : ai.score >= 45 ? "text-warn" : "text-muted")}>
+                        {ai.score}
+                      </div>
+                      <div className="eyebrow mt-1 !text-[9.5px]">из 100</div>
                     </div>
-                    <div className="eyebrow mt-1 !text-[9.5px]">из 100</div>
-                  </div>
+                  )}
                   <div className="min-w-0">
                     <p className="font-serif text-[19px] leading-snug text-fg">{ai.verdict}</p>
-                    <KzVerdict kz={ai.kz} />
+                    {ai.quick ? (
+                      <p className="text-[12.5px] text-muted mt-1.5">
+                        Быстрая проверка по правилам — полную оценку ИИ не делал, чтобы не тратить лимит.
+                      </p>
+                    ) : (
+                      <KzVerdict kz={ai.kz} />
+                    )}
                   </div>
                 </div>
                 {ai.summary && <p className="text-[14px] leading-relaxed text-fg-2">{ai.summary}</p>}
@@ -949,7 +970,7 @@ function Detail({
               <footer className="px-5 py-2.5 border-t border-line flex justify-end">
                 <Btn variant="quiet" size="sm" onClick={onAnalyze} disabled={analyzing}>
                   <IconRefresh size={12} className={cx(analyzing && "animate-spin")} />
-                  {analyzing ? "Проверяю…" : stale ? "Проверить заново" : "Перепроверить"}
+                  {analyzing ? "Проверяю…" : stale ? "Проверить заново" : ai.quick ? "Полная проверка" : "Перепроверить"}
                 </Btn>
               </footer>
             </section>
@@ -969,6 +990,11 @@ function Detail({
               </Btn>
             </section>
           )}
+        </div>
+
+        {/* Отклик: письмо и ответы для формы */}
+        <div className="px-5 sm:px-8 pt-5">
+          <LetterPanel job={job} onLetter={onLetter} />
         </div>
 
         {/* Описание */}
@@ -1151,9 +1177,9 @@ function CheckSummary({
   const pct = all ? (checks.done / all) * 100 : 0;
   const [help, setHelp] = useState(false);
   return (
-    <div className="mx-4 sm:mx-5 mt-3 mb-1 rounded-xl border border-line bg-panel px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2 text-[13px]">
+    <div className="@container mx-4 sm:mx-5 mt-3 mb-1 rounded-xl border border-line bg-panel px-4 py-3">
+      <div className="flex flex-col items-start gap-2 @xl:flex-row @xl:items-center @xl:gap-4">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px]">
           <IconSpark size={13} className="text-accent" />
           <span className="text-fg-2">
             ИИ проверил{" "}
@@ -1180,7 +1206,7 @@ function CheckSummary({
           </button>
         </div>
         {todo > 0 && (
-          <Btn size="sm" onClick={onCheck} disabled={!!bulk} className="ml-auto">
+          <Btn size="sm" onClick={onCheck} disabled={!!bulk} className="@xl:ml-auto">
             {bulk ? (
               <>
                 <IconSpark size={12} className="text-accent animate-pulse" />
