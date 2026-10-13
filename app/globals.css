@@ -1,41 +1,70 @@
 @import "tailwindcss";
 
+/*
+ * Палитра «бумага и чернила»: тёплые нейтральные, один сигнальный цвет (киноварь).
+ * Акцент используется скупо — выделение, главная кнопка, высокий матч.
+ */
 @theme {
-  --color-bg: #f6f7f9;
-  --color-panel: #ffffff;
-  --color-raised: #f0f2f5;
-  --color-fg: #14171c;
-  --color-muted: #5f6b7a;
-  --color-line: #e3e7ec;
-  --color-accent: #4f46e5;
-  --color-accent-fg: #ffffff;
-  --color-accent-soft: #eef0ff;
-  --color-good: #15803d;
-  --color-good-soft: #e7f6ec;
-  --color-warn: #b45309;
-  --color-warn-soft: #fdf3e2;
-  --color-bad: #b91c1c;
-  --color-bad-soft: #fde9e9;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --color-bg: #f3f1ec;
+  --color-panel: #fbfaf7;
+  --color-raised: #ebe8e1;
+  --color-sunken: #efece6;
+  --color-fg: #1b1915;
+  --color-fg-2: #3a362f;
+  --color-muted: #736d62;
+  --color-faint: #a39d91;
+  --color-line: #e0dcd3;
+  --color-line-strong: #cdc7bb;
+  --color-accent: #cf4520;
+  --color-accent-fg: #fffaf6;
+  --color-accent-soft: #f7e3da;
+  --color-good: #2d7a4c;
+  --color-good-soft: #e1efe5;
+  --color-warn: #a86a12;
+  --color-warn-soft: #f5ead6;
+  --color-bad: #b4372b;
+  --color-bad-soft: #f6e0dc;
+
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "Cascadia Code", monospace;
+  --font-serif: var(--font-serif-src), "Iowan Old Style", Georgia, serif;
+
+  --shadow-pop: 0 1px 2px rgb(27 25 21 / 0.06), 0 8px 24px -6px rgb(27 25 21 / 0.16);
+  --animate-fade-in: fade-in 160ms ease-out;
+  --animate-slide-in: slide-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-in {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: none; }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --color-bg: #0d0f13;
-    --color-panel: #14171d;
-    --color-raised: #1b1f27;
-    --color-fg: #e8ebf0;
-    --color-muted: #8b95a5;
-    --color-line: #262b35;
-    --color-accent: #818cf8;
-    --color-accent-fg: #0d0f13;
-    --color-accent-soft: #1f2240;
-    --color-good: #4ade80;
-    --color-good-soft: #13281c;
-    --color-warn: #fbbf24;
-    --color-warn-soft: #2b2312;
-    --color-bad: #f87171;
-    --color-bad-soft: #2d1717;
+    --color-bg: #121110;
+    --color-panel: #181714;
+    --color-raised: #23211d;
+    --color-sunken: #151412;
+    --color-fg: #ece8e1;
+    --color-fg-2: #cfc9bf;
+    --color-muted: #948d81;
+    --color-faint: #6b665d;
+    --color-line: #2a2824;
+    --color-line-strong: #3a3732;
+    --color-accent: #f0643b;
+    --color-accent-fg: #160d09;
+    --color-accent-soft: #3a1d13;
+    --color-good: #6cc58f;
+    --color-good-soft: #17281d;
+    --color-warn: #e0a84a;
+    --color-warn-soft: #2c2312;
+    --color-bad: #ef7b6c;
+    --color-bad-soft: #321a17;
+    --shadow-pop: 0 1px 2px rgb(0 0 0 / 0.4), 0 12px 32px -8px rgb(0 0 0 / 0.6);
   }
 }
 
@@ -47,72 +76,136 @@ body {
 
 body {
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 ::selection {
   background: var(--color-accent-soft);
+  color: var(--color-fg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .scroll-thin {
   scrollbar-width: thin;
-  scrollbar-color: var(--color-line) transparent;
+  scrollbar-color: var(--color-line-strong) transparent;
 }
 
-/* Описание вакансии */
-.prose-job {
-  font-size: 14.5px;
-  line-height: 1.65;
-  overflow-wrap: anywhere;
+.num {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+kbd {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  padding: 1px 5px;
+  border: 1px solid var(--color-line-strong);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--color-fg-2);
+  background: var(--color-panel);
+}
+
+/* Скелетон загрузки */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-raised) 0%, var(--color-sunken) 50%, var(--color-raised) 100%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+  border-radius: 4px;
+}
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* Типографика описания вакансии */
+.prose-job {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--color-fg-2);
+  overflow-wrap: anywhere;
+  max-width: 68ch;
+}
+.prose-job > :first-child { margin-top: 0; }
 .prose-job p,
 .prose-job ul,
 .prose-job ol,
 .prose-job blockquote,
 .prose-job pre,
 .prose-job table {
-  margin: 0 0 0.85em;
+  margin: 0 0 1em;
 }
 .prose-job h3,
 .prose-job h4,
 .prose-job h5 {
-  font-weight: 650;
-  margin: 1.2em 0 0.5em;
-  font-size: 15.5px;
+  font-family: var(--font-sans);
+  color: var(--color-fg);
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  margin: 1.8em 0 0.6em;
 }
-.prose-job ul {
-  list-style: disc;
-  padding-left: 1.3em;
+.prose-job ul { padding-left: 0; list-style: none; }
+.prose-job ul > li {
+  position: relative;
+  padding-left: 1.25em;
+  margin: 0.35em 0;
 }
-.prose-job ol {
-  list-style: decimal;
-  padding-left: 1.3em;
+.prose-job ul > li::before {
+  content: "";
+  position: absolute;
+  left: 0.2em;
+  top: 0.72em;
+  width: 6px;
+  height: 1.5px;
+  background: var(--color-faint);
 }
-.prose-job li {
-  margin: 0.2em 0;
-}
+.prose-job ol { list-style: decimal; padding-left: 1.4em; }
+.prose-job ol > li { margin: 0.35em 0; padding-left: 0.2em; }
+.prose-job ol > li::marker { color: var(--color-muted); font-family: var(--font-mono); font-size: 0.85em; }
 .prose-job a {
-  color: var(--color-accent);
+  color: var(--color-fg);
   text-decoration: underline;
-  text-underline-offset: 2px;
+  text-decoration-color: var(--color-accent);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
 }
 .prose-job strong,
-.prose-job b {
-  font-weight: 650;
-}
+.prose-job b { font-weight: 600; color: var(--color-fg); }
 .prose-job code {
+  font-family: var(--font-mono);
   background: var(--color-raised);
   padding: 0.1em 0.35em;
   border-radius: 4px;
-  font-size: 0.9em;
+  font-size: 0.86em;
 }
 .prose-job blockquote {
-  border-left: 3px solid var(--color-line);
-  padding-left: 0.9em;
+  border-left: 2px solid var(--color-line-strong);
+  padding-left: 1em;
   color: var(--color-muted);
 }
+.prose-job hr { border: 0; border-top: 1px solid var(--color-line); margin: 1.6em 0; }
 .prose-job td,
-.prose-job th {
-  border: 1px solid var(--color-line);
-  padding: 4px 8px;
+.prose-job th { border: 1px solid var(--color-line); padding: 4px 8px; }
+.prose-job mark {
+  background: var(--color-accent-soft);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 2px;
 }

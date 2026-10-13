@@ -3,7 +3,27 @@
 import { Job, JobStatus, ScanProgress, SOURCE_LABELS, SourceId } from "@/lib/types";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Btn, cx, GeoBadge, Logo, ScoreBadge, timeAgo } from "./ui";
+import { SCAN_EVENT, triggerScan } from "./Header";
+import {
+  IconArrowLeft,
+  IconCheck,
+  IconClock,
+  IconExternal,
+  IconEyeOff,
+  IconGlobe,
+  IconMinus,
+  IconPin,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconSliders,
+  IconSpark,
+  IconStar,
+  IconUndo,
+  IconWallet,
+  IconX,
+} from "./icons";
+import { Btn, cx, dayBucket, fmtDate, GeoTag, Logo, MatchMeter, Segmented, Switch, timeAgo } from "./ui";
 
 type ListJob = Omit<Job, "description"> & { rank: number };
 interface ListResp {
@@ -12,17 +32,33 @@ interface ListResp {
   sources: Record<string, number>;
   jobs: ListJob[];
 }
+type Filters = {
+  q: string;
+  status: string;
+  source: string;
+  geo: string;
+  minScore: number;
+  sort: "rank" | "date" | "salary";
+  ai: boolean;
+  salary: boolean;
+};
 
 const STATUS_TABS: { id: string; label: string; key?: JobStatus }[] = [
   { id: "active", label: "Все" },
   { id: "new", label: "Новые", key: "new" },
   { id: "saved", label: "Избранное", key: "saved" },
-  { id: "applied", label: "Откликнулся", key: "applied" },
+  { id: "applied", label: "Отклики", key: "applied" },
   { id: "hidden", label: "Скрытые", key: "hidden" },
 ];
 
+const plural = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10,
+    m100 = n % 100;
+  return m10 === 1 && m100 !== 11 ? one : m10 >= 2 && m10 <= 4 && (m100 < 10 || m100 >= 20) ? few : many;
+};
+
 export default function JobsView() {
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState<Filters>({
     q: "",
     status: "active",
     source: "",
@@ -33,18 +69,30 @@ export default function JobsView() {
     salary: false,
   });
   const [data, setData] = useState<ListResp | null>(null);
-  const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<string | null>(null);
+
+  // Прямая ссылка на вакансию: /?job=<id>; выбранная вакансия синхронизируется с адресом
+  useEffect(() => {
+    const id = new URLSearchParams(location.search).get("job");
+    if (id) setSelected(id);
+  }, []);
+  useEffect(() => {
+    const url = new URL(location.href);
+    if (selected) url.searchParams.set("job", selected);
+    else url.searchParams.delete("job");
+    history.replaceState(null, "", url);
+  }, [selected]);
   const [detail, setDetail] = useState<Job | null>(null);
-  const [progress, setProgress] = useState<ScanProgress | null>(null);
+  const [scanning, setScanning] = useState(false);
   const [analyzing, setAnalyzing] = useState<Set<string>>(new Set());
   const [bulk, setBulk] = useState<{ done: number; total: number } | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
-  const listRef = useRef<HTMLDivElement>(null);
+  const [toast, setToast] = useState<{ text: string; tone?: "error" } | null>(null);
+  const [drawer, setDrawer] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
-  const notify = (m: string) => {
-    setToast(m);
-    setTimeout(() => setToast(null), 5000);
+  const notify = (text: string, tone?: "error") => {
+    setToast({ text, tone });
+    setTimeout(() => setToast(null), 6000);
   };
 
   const load = useCallback(async () => {
@@ -60,42 +108,29 @@ export default function JobsView() {
     });
     const r = await fetch(`/api/jobs?${p}`);
     setData(await r.json());
-    setLoading(false);
   }, [filters]);
 
   useEffect(() => {
-    const t = setTimeout(load, filters.q ? 200 : 0);
+    const t = setTimeout(load, filters.q ? 180 : 0);
     return () => clearTimeout(t);
   }, [load, filters.q]);
 
-  // Прогресс скана: поллим, пока идёт
-  const pollProgress = useCallback(async () => {
-    const p: ScanProgress = await (await fetch("/api/scan")).json();
-    setProgress(p);
-    return p;
-  }, []);
+  // Шапка сообщает о ходе скана — подтягиваем новые вакансии по мере поступления
   useEffect(() => {
-    pollProgress();
-  }, [pollProgress]);
-  useEffect(() => {
-    if (!progress?.running) return;
-    const t = setInterval(async () => {
-      const p = await pollProgress();
-      load();
-      if (!p.running) clearInterval(t);
-    }, 1500);
-    return () => clearInterval(t);
-  }, [progress?.running, pollProgress, load]);
+    const onScan = (e: Event) => {
+      const p = (e as CustomEvent).detail as ScanProgress | { started: true };
+      if ("started" in p) return setScanning(true);
+      setScanning(p.running);
+      if (p.running || p.finishedAt) load();
+    };
+    window.addEventListener(SCAN_EVENT, onScan);
+    return () => window.removeEventListener(SCAN_EVENT, onScan);
+  }, [load]);
 
-  const startScan = async () => {
-    const r = await (await fetch("/api/scan", { method: "POST" })).json();
-    setProgress(r.progress);
-  };
-
-  // Детали выбранной
   useEffect(() => {
     if (!selected) return setDetail(null);
     let cancel = false;
+    setDetail(null);
     fetch(`/api/jobs/${selected}`)
       .then((r) => r.json())
       .then((j) => !cancel && setDetail(j));
@@ -112,16 +147,22 @@ export default function JobsView() {
   };
 
   const setStatus = async (id: string, status: JobStatus) => {
-    const job = jobs.find((j) => j.id === id);
+    const job = jobs.find((j) => j.id === id) ?? (detail?.id === id ? detail : undefined);
     const next = job?.status === status ? "new" : status;
     await fetch(`/api/jobs/${id}`, { method: "PATCH", body: JSON.stringify({ status: next }) });
     patchLocal(id, { status: next });
+    setData((d) => {
+      if (!d || !job) return d;
+      const counts = { ...d.counts, [job.status]: d.counts[job.status] - 1, [next]: d.counts[next] + 1 };
+      return { ...d, counts };
+    });
     // Скрытая уходит из списка — выделяем следующую
     if (next === "hidden" && filters.status !== "hidden") {
       const idx = jobs.findIndex((j) => j.id === id);
       const following = jobs[idx + 1] ?? jobs[idx - 1];
       setData((d) => d && { ...d, jobs: d.jobs.filter((j) => j.id !== id), total: d.total - 1 });
-      setSelected(following?.id ?? null);
+      if (selected === id) setSelected(following?.id ?? null);
+      notify("Вакансия скрыта");
     }
   };
 
@@ -130,7 +171,7 @@ export default function JobsView() {
     setAnalyzing((s) => new Set([...s, ...ids]));
     try {
       const r = await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ ids, force }) });
-      const j: { results?: Record<string, Job["ai"]>; error?: string; fromCache?: number } = await r.json();
+      const j: { results?: Record<string, Job["ai"]>; error?: string } = await r.json();
       const results = j.results ?? {};
       for (const [id, ai] of Object.entries(results)) patchLocal(id, { ai });
       setData(
@@ -145,7 +186,7 @@ export default function JobsView() {
       );
       // Описание могло догрузиться во время анализа — обновим открытую карточку
       if (selected && ids.includes(selected)) fetch(`/api/jobs/${selected}`).then((r) => r.json()).then(setDetail);
-      if (j.error) notify(`ИИ: ${j.error}`);
+      if (j.error) notify(j.error, "error");
       return !j.error;
     } finally {
       setAnalyzing((s) => {
@@ -173,10 +214,16 @@ export default function JobsView() {
   const selIdx = useMemo(() => jobs.findIndex((j) => j.id === selected), [jobs, selected]);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.target as HTMLElement).closest("input,textarea,select")) return;
+      if ((e.target as HTMLElement).closest("input,textarea,select")) {
+        if (e.key === "Escape") (e.target as HTMLElement).blur();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === "j" || k === "arrowdown" || k === "k" || k === "arrowup") {
+      if (k === "/") {
+        e.preventDefault();
+        searchRef.current?.focus();
+      } else if (k === "j" || k === "arrowdown" || k === "k" || k === "arrowup") {
         e.preventDefault();
         const dir = k === "j" || k === "arrowdown" ? 1 : -1;
         const next = jobs[Math.max(0, Math.min(jobs.length - 1, selIdx + dir))];
@@ -197,139 +244,177 @@ export default function JobsView() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const f = (patch: Partial<typeof filters>) => setFilters((x) => ({ ...x, ...patch }));
-  const noData = !loading && data && data.counts.total === 0;
+  const f = (patch: Partial<Filters>) => setFilters((x) => ({ ...x, ...patch }));
+  const aiCount = jobs.filter((j) => j.ai).length;
+  const activeFilters =
+    (filters.source ? 1 : 0) + (filters.geo !== "ok,maybe" ? 1 : 0) + (filters.minScore ? 1 : 0) + (filters.ai ? 1 : 0) + (filters.salary ? 1 : 0);
+
+  // Группы по давности — только при сортировке по дате
+  const groups = useMemo(() => {
+    if (filters.sort !== "date") return [{ label: "", items: jobs }];
+    const out: { label: string; items: ListJob[] }[] = [];
+    for (const j of jobs) {
+      const label = dayBucket(j.postedAt ?? j.firstSeenAt);
+      const last = out[out.length - 1];
+      if (last?.label === label) last.items.push(j);
+      else out.push({ label, items: [j] });
+    }
+    return out;
+  }, [jobs, filters.sort]);
+
+  const filterPanel = (
+    <FilterPanel
+      filters={filters}
+      f={f}
+      sources={data?.sources ?? {}}
+      onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, ai: false, salary: false })}
+      activeCount={activeFilters}
+    />
+  );
 
   return (
     <div className="h-full flex">
-      {/* Фильтры */}
-      <aside className="w-64 shrink-0 border-r border-line bg-panel overflow-y-auto scroll-thin hidden lg:block">
-        <div className="p-4 space-y-6">
-          <ScanBox progress={progress} onScan={startScan} />
-
-          <Section title="Сортировка">
-            <select
-              value={filters.sort}
-              onChange={(e) => f({ sort: e.target.value })}
-              className="w-full h-9 rounded-lg border border-line bg-panel px-2 text-sm"
-            >
-              <option value="rank">По соответствию</option>
-              <option value="date">Сначала свежие</option>
-              <option value="salary">По зарплате</option>
-            </select>
-          </Section>
-
-          <Section title={`Мин. рейтинг: ${filters.minScore}`}>
-            <input
-              type="range"
-              min={0}
-              max={90}
-              step={5}
-              value={filters.minScore}
-              onChange={(e) => f({ minScore: Number(e.target.value) })}
-              className="w-full accent-[var(--color-accent)]"
-            />
-          </Section>
-
-          <Section title="Работа из Казахстана">
-            {[
-              ["ok,maybe", "Подходит или неясно"],
-              ["ok", "Только явно подходит"],
-              ["", "Показать все"],
-            ].map(([v, l]) => (
-              <Radio key={v} checked={filters.geo === v} onChange={() => f({ geo: v })} label={l} />
-            ))}
-          </Section>
-
-          <Section title="Дополнительно">
-            <Check checked={filters.ai} onChange={(v) => f({ ai: v })} label="Только с ИИ-оценкой" />
-            <Check checked={filters.salary} onChange={(v) => f({ salary: v })} label="Только с зарплатой" />
-          </Section>
-
-          <Section title="Площадки">
-            <Radio checked={!filters.source} onChange={() => f({ source: "" })} label="Все" />
-            {Object.entries(data?.sources ?? {})
-              .sort((a, b) => b[1] - a[1])
-              .map(([id, n]) => (
-                <Radio
-                  key={id}
-                  checked={filters.source === id}
-                  onChange={() => f({ source: id })}
-                  label={SOURCE_LABELS[id as SourceId] ?? id}
-                  count={n}
-                />
-              ))}
-          </Section>
-        </div>
-      </aside>
+      <aside className="w-60 shrink-0 border-r border-line overflow-y-auto scroll-thin hidden lg:block">{filterPanel}</aside>
 
       {/* Список */}
       <section className={cx("flex-1 min-w-0 flex flex-col", selected && "hidden md:flex")}>
-        <div className="p-3 border-b border-line bg-panel space-y-3">
+        <div className="px-4 sm:px-5 pt-4 pb-3 space-y-3 border-b border-line">
           <div className="flex gap-2">
-            <input
-              value={filters.q}
-              onChange={(e) => f({ q: e.target.value })}
-              placeholder="Поиск по названию, компании, тегам…"
-              className="flex-1 min-w-0 h-9 rounded-lg border border-line bg-bg px-3 text-sm outline-none focus:border-accent"
-            />
-            <Btn variant="outline" className="lg:hidden" onClick={startScan} disabled={progress?.running}>
-              {progress?.running ? "Скан…" : "Скан"}
+            <label className="relative flex-1 min-w-0">
+              <IconSearch size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-faint pointer-events-none" />
+              <input
+                ref={searchRef}
+                value={filters.q}
+                onChange={(e) => f({ q: e.target.value })}
+                placeholder="Должность, компания, технология"
+                className="w-full h-9 rounded-lg border border-line-strong/80 bg-panel pl-9 pr-10 text-[13.5px] outline-none focus:border-fg-2 transition-colors placeholder:text-faint"
+              />
+              {filters.q ? (
+                <button
+                  onClick={() => f({ q: "" })}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 size-6 grid place-items-center rounded text-muted hover:text-fg"
+                  aria-label="Очистить поиск"
+                >
+                  <IconX size={13} />
+                </button>
+              ) : (
+                <kbd className="absolute right-2.5 top-1/2 -translate-y-1/2 hidden sm:block">/</kbd>
+              )}
+            </label>
+            <Btn className="lg:hidden" onClick={() => setDrawer(true)} aria-label="Фильтры">
+              <IconSliders size={14} />
+              <span className="hidden sm:inline">Фильтры</span>
+              {activeFilters > 0 && <span className="num text-accent">{activeFilters}</span>}
             </Btn>
             <Btn
-              variant="outline"
               onClick={() => analyzeTop(10)}
               disabled={!!bulk || !jobs.some((j) => !j.ai)}
-              title="Отправить в ИИ первые 10 вакансий без оценки"
+              title="Оценить ИИ первые 10 вакансий без оценки (2 запроса к модели)"
             >
-              {bulk ? `ИИ ${bulk.done}/${bulk.total}` : "✦ ИИ топ-10"}
+              <IconSpark size={14} className="text-accent" />
+              {bulk ? (
+                <span className="num">
+                  {bulk.done}/{bulk.total}
+                </span>
+              ) : (
+                <span className="hidden sm:inline">Оценить топ-10</span>
+              )}
             </Btn>
           </div>
-          <div className="flex gap-1 overflow-x-auto scroll-thin">
-            {STATUS_TABS.map((t) => (
-              <button
-                key={t.id}
-                onClick={() => f({ status: t.id })}
-                className={cx(
-                  "px-3 h-8 rounded-md text-sm whitespace-nowrap",
-                  filters.status === t.id ? "bg-accent-soft text-accent font-medium" : "text-muted hover:bg-raised",
-                )}
-              >
-                {t.label}
-                {t.key && data ? <span className="ml-1.5 text-xs opacity-70">{data.counts[t.key]}</span> : null}
-              </button>
-            ))}
-            <span className="ml-auto text-xs text-muted self-center pl-3 whitespace-nowrap">
-              {data ? `Найдено: ${data.total}` : ""}
-            </span>
+
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex gap-0.5 overflow-x-auto scroll-thin max-w-full">
+              {STATUS_TABS.map((t) => {
+                const active = filters.status === t.id;
+                return (
+                  <button
+                    key={t.id}
+                    onClick={() => f({ status: t.id })}
+                    className={cx(
+                      "h-7 px-2.5 rounded-md text-[13px] whitespace-nowrap transition-colors",
+                      active ? "text-fg font-medium bg-raised" : "text-muted hover:text-fg",
+                    )}
+                  >
+                    {t.label}
+                    {t.key && data ? <span className="num ml-1.5 text-[11.5px] text-faint">{data.counts[t.key]}</span> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <Segmented
+              className="ml-auto shrink-0"
+              value={filters.sort}
+              onChange={(v) => f({ sort: v })}
+              options={[
+                { value: "rank", label: "Соответствие" },
+                { value: "date", label: "Свежие" },
+                { value: "salary", label: "Зарплата" },
+              ]}
+            />
           </div>
         </div>
 
-        <div ref={listRef} className="flex-1 overflow-y-auto scroll-thin">
-          {noData ? (
-            <Empty onScan={startScan} running={!!progress?.running} />
-          ) : jobs.length === 0 && !loading ? (
-            <p className="p-10 text-center text-muted text-sm">Ничего не найдено. Ослабьте фильтры или запустите скан.</p>
+        <div className="flex-1 overflow-y-auto scroll-thin">
+          {data && data.counts.total > 0 && jobs.length > 0 && (
+            <div className="px-5 pt-3 pb-1 text-[12px] text-muted flex gap-3">
+              <span>
+                <span className="num text-fg-2">{data.total}</span> {plural(data.total, "вакансия", "вакансии", "вакансий")}
+              </span>
+              {aiCount > 0 && (
+                <span className="flex items-center gap-1">
+                  <IconSpark size={11} className="text-accent" />
+                  <span className="num text-fg-2">{aiCount}</span> с оценкой ИИ
+                </span>
+              )}
+              {data.total > jobs.length && <span>показаны первые {jobs.length}</span>}
+            </div>
+          )}
+
+          {!data ? (
+            <ListSkeleton />
+          ) : data.counts.total === 0 ? (
+            <EmptyFirstRun scanning={scanning} />
+          ) : jobs.length === 0 ? (
+            <div className="px-6 py-20 text-center">
+              <p className="font-serif text-[22px]">Ничего не нашлось</p>
+              <p className="text-[13px] text-muted mt-1.5">Ослабьте фильтры или измените запрос.</p>
+              {activeFilters > 0 && (
+                <Btn className="mt-4" onClick={() => f({ source: "", geo: "ok,maybe", minScore: 0, ai: false, salary: false })}>
+                  Сбросить фильтры
+                </Btn>
+              )}
+            </div>
           ) : (
-            <ul className="divide-y divide-line">
-              {jobs.map((j) => (
-                <JobRow
-                  key={j.id}
-                  job={j}
-                  active={j.id === selected}
-                  analyzing={analyzing.has(j.id)}
-                  onClick={() => setSelected(j.id)}
-                />
-              ))}
-            </ul>
+            groups.map((g) => (
+              <div key={g.label || "all"}>
+                {g.label && (
+                  <div className="sticky top-0 z-10 px-5 pt-4 pb-2 bg-bg/90 backdrop-blur flex items-baseline gap-2">
+                    <span className="eyebrow">{g.label}</span>
+                    <span className="num text-[11px] text-faint">{g.items.length}</span>
+                  </div>
+                )}
+                <ul className="px-2 sm:px-3 pb-2">
+                  {g.items.map((j) => (
+                    <JobRow
+                      key={j.id}
+                      job={j}
+                      active={j.id === selected}
+                      analyzing={analyzing.has(j.id)}
+                      onClick={() => setSelected(j.id)}
+                      onStatus={(s) => setStatus(j.id, s)}
+                    />
+                  ))}
+                </ul>
+              </div>
+            ))
           )}
         </div>
       </section>
 
       {/* Детали */}
       {selected && (
-        <section className="w-full md:w-[52%] xl:w-[48%] shrink-0 border-l border-line bg-panel flex flex-col min-w-0">
-          {detail ? (
+        <section className="w-full md:w-[54%] xl:w-[50%] shrink-0 border-l border-line bg-panel flex flex-col min-w-0 animate-slide-in">
+          {detail && detail.id === selected ? (
             <Detail
               job={detail}
               analyzing={analyzing.has(detail.id)}
@@ -338,138 +423,308 @@ export default function JobsView() {
               onClose={() => setSelected(null)}
             />
           ) : (
-            <div className="p-8 text-muted text-sm">Загрузка…</div>
+            <DetailSkeleton onClose={() => setSelected(null)} />
           )}
         </section>
       )}
 
+      {/* Фильтры на мобильных */}
+      {drawer && (
+        <div className="fixed inset-0 z-40 lg:hidden">
+          <div className="absolute inset-0 bg-fg/30 animate-fade-in" onClick={() => setDrawer(false)} />
+          <div className="absolute left-0 top-0 bottom-0 w-[86%] max-w-80 bg-panel shadow-[var(--shadow-pop)] overflow-y-auto animate-slide-in">
+            <div className="flex items-center justify-between px-5 pt-4">
+              <span className="font-serif text-[20px]">Фильтры</span>
+              <Btn variant="ghost" icon onClick={() => setDrawer(false)} aria-label="Закрыть">
+                <IconX size={15} />
+              </Btn>
+            </div>
+            {filterPanel}
+          </div>
+        </div>
+      )}
+
       {toast && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 max-w-xl bg-fg text-bg text-sm px-4 py-3 rounded-lg shadow-lg z-50">
-          {toast}
+        <div
+          role="status"
+          className={cx(
+            "fixed bottom-5 left-1/2 -translate-x-1/2 z-50 max-w-[min(560px,calc(100vw-32px))] flex items-start gap-2.5",
+            "rounded-xl px-4 py-3 text-[13px] shadow-[var(--shadow-pop)] animate-fade-in",
+            toast.tone === "error" ? "bg-bad-soft text-bad border border-bad/20" : "bg-fg text-bg",
+          )}
+        >
+          <span className="leading-snug break-words">{toast.text}</span>
+          <button onClick={() => setToast(null)} className="opacity-60 hover:opacity-100 shrink-0 mt-0.5" aria-label="Закрыть">
+            <IconX size={12} />
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+/* ───────── Фильтры ───────── */
+
+function FilterPanel({
+  filters,
+  f,
+  sources,
+  onReset,
+  activeCount,
+}: {
+  filters: Filters;
+  f: (p: Partial<Filters>) => void;
+  sources: Record<string, number>;
+  onReset: () => void;
+  activeCount: number;
+}) {
+  const sorted = Object.entries(sources).sort((a, b) => b[1] - a[1]);
+  const max = Math.max(1, ...sorted.map(([, n]) => n));
+  const total = sorted.reduce((a, [, n]) => a + n, 0);
   return (
-    <div>
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-muted mb-2">{title}</h3>
-      <div className="space-y-0.5">{children}</div>
+    <div className="px-5 py-5 space-y-7">
+      <FilterGroup title="Работа из Казахстана">
+        {[
+          ["ok,maybe", "Доступно или не указано"],
+          ["ok", "Только явно доступно"],
+          ["", "Все, включая ограниченные"],
+        ].map(([v, l]) => (
+          <Option key={v} checked={filters.geo === v} onClick={() => f({ geo: v })}>
+            {l}
+          </Option>
+        ))}
+      </FilterGroup>
+
+      <FilterGroup
+        title="Соответствие"
+        aside={
+          <span className="num text-[12px] text-fg-2">
+            {filters.minScore ? `от ${filters.minScore}` : "любое"}
+          </span>
+        }
+      >
+        <input
+          type="range"
+          min={0}
+          max={90}
+          step={5}
+          value={filters.minScore}
+          onChange={(e) => f({ minScore: Number(e.target.value) })}
+          className="w-full accent-[var(--color-fg)] mt-1"
+          aria-label="Минимальное соответствие"
+        />
+        <div className="flex justify-between num text-[10.5px] text-faint -mt-0.5">
+          <span>0</span>
+          <span>45</span>
+          <span>90</span>
+        </div>
+      </FilterGroup>
+
+      <FilterGroup title="Показывать">
+        <div className="space-y-3 pt-1">
+          <Switch checked={filters.ai} onChange={(v) => f({ ai: v })} label="Только с оценкой ИИ" />
+          <Switch checked={filters.salary} onChange={(v) => f({ salary: v })} label="Только с зарплатой" />
+        </div>
+      </FilterGroup>
+
+      <FilterGroup title="Площадки" aside={<span className="num text-[11px] text-faint">{sorted.length}</span>}>
+        <Option checked={!filters.source} onClick={() => f({ source: "" })} count={total}>
+          Все площадки
+        </Option>
+        {sorted.map(([id, n]) => (
+          <Option key={id} checked={filters.source === id} onClick={() => f({ source: id })} count={n} bar={n / max}>
+            {SOURCE_LABELS[id as SourceId]?.replace(/ \(.*\)$/, "") ?? id}
+          </Option>
+        ))}
+      </FilterGroup>
+
+      {activeCount > 0 && (
+        <button onClick={onReset} className="text-[12.5px] text-muted hover:text-fg flex items-center gap-1.5">
+          <IconUndo size={13} /> Сбросить фильтры
+        </button>
+      )}
     </div>
   );
 }
 
-function Radio({ checked, onChange, label, count }: { checked: boolean; onChange: () => void; label: string; count?: number }) {
+function FilterGroup({ title, aside, children }: { title: string; aside?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="eyebrow">{title}</h3>
+        {aside}
+      </div>
+      <div className="space-y-px">{children}</div>
+    </div>
+  );
+}
+
+function Option({
+  checked,
+  onClick,
+  children,
+  count,
+  bar,
+}: {
+  checked: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  count?: number;
+  bar?: number;
+}) {
   return (
     <button
-      onClick={onChange}
+      onClick={onClick}
       className={cx(
-        "w-full flex items-center justify-between text-left text-sm px-2 h-8 rounded-md",
-        checked ? "bg-accent-soft text-accent font-medium" : "hover:bg-raised",
+        "relative w-full flex items-center gap-2 text-left text-[13px] px-2 h-[30px] rounded-md -mx-2 transition-colors",
+        checked ? "text-fg font-medium bg-raised" : "text-fg-2 hover:bg-raised/60",
       )}
+      style={{ width: "calc(100% + 16px)" }}
     >
-      <span className="truncate">{label}</span>
-      {count != null && <span className="text-xs opacity-70 tabular-nums">{count}</span>}
+      <span className={cx("size-1.5 rounded-full shrink-0", checked ? "bg-accent" : "bg-transparent")} />
+      <span className="truncate flex-1">{children}</span>
+      {bar != null && (
+        <span className="w-6 h-[3px] rounded-full bg-line overflow-hidden shrink-0">
+          <span className="block h-full bg-faint" style={{ width: `${Math.max(6, bar * 100)}%` }} />
+        </span>
+      )}
+      {count != null && <span className="num text-[11.5px] text-muted w-7 text-right">{count}</span>}
     </button>
   );
 }
 
-function Check({ checked, onChange, label }: { checked: boolean; onChange: (v: boolean) => void; label: string }) {
-  return (
-    <label className="flex items-center gap-2 text-sm px-2 h-8 rounded-md hover:bg-raised cursor-pointer">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} className="accent-[var(--color-accent)]" />
-      {label}
-    </label>
-  );
-}
+/* ───────── Строка списка ───────── */
 
-function ScanBox({ progress, onScan }: { progress: ScanProgress | null; onScan: () => void }) {
-  const running = progress?.running;
-  const entries = Object.entries(progress?.sources ?? {});
-  return (
-    <div className="rounded-xl border border-line p-3 space-y-3 bg-bg">
-      <Btn variant="primary" className="w-full" onClick={onScan} disabled={running}>
-        {running ? "Сканирую…" : "↻ Сканировать площадки"}
-      </Btn>
-      {progress && progress.phase !== "idle" && (
-        <div className="text-xs space-y-1.5">
-          <div className="flex justify-between text-muted">
-            <span>
-              {progress.phase}
-              {progress.analyzeTotal ? ` ${progress.analyzed}/${progress.analyzeTotal}` : ""}
-            </span>
-            {!running && progress.finishedAt && <span>{timeAgo(progress.finishedAt)} назад</span>}
-          </div>
-          <div className="text-muted">
-            Новых: <b className="text-fg">{progress.added}</b> · обновлено: {progress.updated}
-          </div>
-          <ul className="space-y-1">
-            {entries.map(([id, s]) => (
-              <li key={id} className="flex items-center gap-2" title={s.error}>
-                <span
-                  className={cx(
-                    "size-1.5 rounded-full shrink-0",
-                    s.state === "done" && "bg-good",
-                    s.state === "error" && "bg-bad",
-                    s.state === "running" && "bg-warn animate-pulse",
-                    s.state === "pending" && "bg-line",
-                  )}
-                />
-                <span className="truncate flex-1">{SOURCE_LABELS[id as SourceId] ?? id}</span>
-                <span className={cx("tabular-nums", s.state === "error" ? "text-bad" : "text-muted")}>
-                  {s.state === "error" ? "ошибка" : s.state === "done" ? s.count : "…"}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function JobRow({ job, active, analyzing, onClick }: { job: ListJob; active: boolean; analyzing: boolean; onClick: () => void }) {
+function JobRow({
+  job,
+  active,
+  analyzing,
+  onClick,
+  onStatus,
+}: {
+  job: ListJob;
+  active: boolean;
+  analyzing: boolean;
+  onClick: () => void;
+  onStatus: (s: JobStatus) => void;
+}) {
+  const salary = job.salary || job.ai?.salary;
   return (
     <li
       id={`job-${job.id}`}
       onClick={onClick}
       className={cx(
-        "flex gap-3 px-4 py-3.5 cursor-pointer border-l-2",
-        active ? "bg-accent-soft border-accent" : "border-transparent hover:bg-raised",
+        "group relative flex gap-3.5 px-3 py-3.5 rounded-xl cursor-pointer transition-colors",
+        active ? "bg-panel shadow-[0_0_0_1px_var(--color-line-strong)]" : "hover:bg-panel/70",
       )}
     >
+      {active && <span className="absolute left-0 top-4 bottom-4 w-[2px] rounded-full bg-accent" />}
       <Logo src={job.companyLogo} name={job.company || job.title} />
       <div className="flex-1 min-w-0">
         <div className="flex items-start gap-2">
-          <h3 className={cx("font-medium leading-snug line-clamp-2", job.status === "new" && "font-semibold")}>{job.title}</h3>
-          {job.status === "saved" && <span className="text-warn text-sm" title="В избранном">★</span>}
-          {job.status === "applied" && <span className="text-good text-xs font-medium whitespace-nowrap">✓ отклик</span>}
+          <h3 className="text-[14.5px] font-medium leading-snug tracking-[-0.01em] line-clamp-2 text-fg">
+            {job.title}
+          </h3>
         </div>
-        <div className="text-sm text-muted mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 items-center">
-          {job.company && <span className="text-fg/80">{job.company}</span>}
-          <span className="truncate max-w-64">{job.location}</span>
-          <span>· {job.sourceLabel}</span>
-          <span>· {timeAgo(job.postedAt ?? job.firstSeenAt)}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 mt-2">
-          <GeoBadge geo={job.geo} />
-          {(job.salary || job.ai?.salary) && (
-            <span className="text-[11px] px-1.5 py-0.5 rounded bg-raised font-medium">{job.salary || job.ai?.salary}</span>
-          )}
-          {job.matched.slice(0, 5).map((m) => (
-            <span key={m} className="text-[11px] px-1.5 py-0.5 rounded bg-accent-soft text-accent">
-              {m}
+        <p className="text-[13px] text-muted mt-0.5 truncate">
+          <span className="text-fg-2">{job.company || "Компания не указана"}</span>
+          <span className="text-faint"> · </span>
+          {job.location.replace(/^Remote · |^Удалённо · /, "")}
+        </p>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-2">
+          <GeoTag geo={job.geo} compact />
+          {salary && (
+            <span className="flex items-center gap-1 text-[12px] text-fg-2">
+              <IconWallet size={12} className="text-faint" />
+              <span className="num">{salary}</span>
             </span>
-          ))}
+          )}
+          {job.status === "saved" && (
+            <span className="flex items-center gap-1 text-[12px] text-warn">
+              <IconStar size={12} filled /> В избранном
+            </span>
+          )}
+          {job.status === "applied" && (
+            <span className="flex items-center gap-1 text-[12px] text-good">
+              <IconCheck size={12} /> Отклик
+            </span>
+          )}
+          <span className="text-[11.5px] text-faint num ml-auto sm:ml-0">
+            {job.sourceLabel.replace(/ · (Greenhouse|Lever|Ashby)$/, "")} · {timeAgo(job.postedAt ?? job.firstSeenAt)}
+          </span>
         </div>
-        {job.ai && <p className="text-sm mt-2 text-fg/85 line-clamp-2">✦ {job.ai.verdict}</p>}
-        {analyzing && <p className="text-xs mt-2 text-accent animate-pulse">ИИ анализирует…</p>}
+
+        {job.matched.length > 0 && (
+          <div className="flex flex-wrap gap-1 mt-2">
+            {job.matched.slice(0, 6).map((m) => (
+              <span key={m} className="font-mono text-[11px] px-1.5 h-5 leading-5 rounded bg-raised text-fg-2">
+                {m}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {job.ai && (
+          <p className="mt-2.5 text-[13.5px] leading-snug text-fg-2 font-serif italic line-clamp-2">
+            «{job.ai.verdict}»
+          </p>
+        )}
+        {analyzing && (
+          <p className="mt-2 text-[12px] text-accent flex items-center gap-1.5">
+            <IconSpark size={12} className="animate-pulse" /> ИИ читает вакансию…
+          </p>
+        )}
       </div>
-      <ScoreBadge value={job.rank} ai={!!job.ai} />
+
+      <div className="flex flex-col items-end justify-between shrink-0">
+        <MatchMeter value={job.rank} ai={!!job.ai} />
+        {/* Быстрые действия при наведении */}
+        <div className="flex gap-0.5 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+          <QuickBtn
+            label={job.status === "saved" ? "Убрать из избранного" : "В избранное"}
+            onClick={() => onStatus("saved")}
+            active={job.status === "saved"}
+          >
+            <IconStar size={13} filled={job.status === "saved"} />
+          </QuickBtn>
+          <QuickBtn label={job.status === "hidden" ? "Вернуть" : "Скрыть"} onClick={() => onStatus("hidden")}>
+            {job.status === "hidden" ? <IconUndo size={13} /> : <IconEyeOff size={13} />}
+          </QuickBtn>
+        </div>
+      </div>
     </li>
   );
+}
+
+function QuickBtn({ label, onClick, children, active }: { label: string; onClick: () => void; children: React.ReactNode; active?: boolean }) {
+  return (
+    <button
+      title={label}
+      aria-label={label}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className={cx("size-7 grid place-items-center rounded-md hover:bg-raised", active ? "text-warn" : "text-muted hover:text-fg")}
+    >
+      {children}
+    </button>
+  );
+}
+
+/* ───────── Детальная карточка ───────── */
+
+/** Подсвечивает совпавшие навыки в тексте описания, не трогая HTML-теги */
+function highlight(html: string, words: string[]): string {
+  const ws = words.map((w) => w.trim()).filter((w) => w.length > 1);
+  if (!ws.length) return html;
+  const esc = ws.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\.|\s+|-/g, "[\\s.\\-]?"));
+  const re = new RegExp(`(?<![\\p{L}\\d])(${esc.join("|")})(?![\\p{L}\\d])`, "giu");
+  return html
+    .split(/(<[^>]+>)/)
+    .map((part) => (part.startsWith("<") ? part : part.replace(re, "<mark>$1</mark>")))
+    .join("");
 }
 
 function Detail({
@@ -488,153 +743,307 @@ function Detail({
   const scrollRef = useRef<HTMLDivElement>(null);
   useEffect(() => scrollRef.current?.scrollTo(0, 0), [job.id]);
   const ai = job.ai;
+  const rank = ai ? Math.round(ai.score * 0.7 + job.score * 0.3) : job.score;
+  const html = useMemo(() => highlight(job.description, job.matched), [job.description, job.matched]);
+  const tags = job.tags.filter((t) => !t.startsWith("поиск: "));
+
+  const facts = [
+    { icon: IconWallet, label: "Зарплата", value: job.salary || ai?.salary || "Не указана", mono: !!(job.salary || ai?.salary) },
+    { icon: IconPin, label: "Локация", value: job.location.replace(/^Remote · |^Удалённо · /, "") || "—" },
+    { icon: IconGlobe, label: "Из Казахстана", value: <GeoTag geo={job.geo} /> },
+    { icon: IconClock, label: "Опубликовано", value: fmtDate(job.postedAt ?? job.firstSeenAt) },
+  ];
+
   return (
     <>
-      <div className="p-5 border-b border-line space-y-4">
-        <div className="flex items-start gap-3">
-          <button onClick={onClose} className="md:hidden -ml-1 mr-1 text-muted text-xl" aria-label="Назад">
-            ←
-          </button>
-          <Logo src={job.companyLogo} name={job.company || job.title} />
-          <div className="flex-1 min-w-0">
-            <h2 className="text-lg font-semibold leading-snug">{job.title}</h2>
-            <p className="text-sm text-muted mt-0.5">
-              {job.company || "Компания не указана"} · {job.location}
-            </p>
-          </div>
-          <ScoreBadge value={ai ? Math.round(ai.score * 0.7 + job.score * 0.3) : job.score} ai={!!ai} size="lg" />
-        </div>
-
-        <div className="flex flex-wrap gap-1.5 text-xs">
-          <GeoBadge geo={job.geo} />
-          {job.salary && <span className="px-1.5 py-0.5 rounded bg-raised font-medium">{job.salary}</span>}
-          {job.employment && <span className="px-1.5 py-0.5 rounded bg-raised">{job.employment}</span>}
-          <span className="px-1.5 py-0.5 rounded bg-raised">{job.sourceLabel}</span>
-          <span className="px-1.5 py-0.5 rounded bg-raised">
-            опубликовано {job.postedAt ? new Date(job.postedAt).toLocaleDateString("ru-RU") : "—"}
-          </span>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <a
-            href={job.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 rounded-lg text-sm font-medium px-3 h-9 bg-accent text-accent-fg hover:opacity-90"
+      <div className="flex items-center gap-1 px-3 sm:px-5 h-12 border-b border-line shrink-0">
+        <Btn variant="ghost" size="sm" onClick={onClose} className="md:hidden -ml-1">
+          <IconArrowLeft size={14} /> Назад
+        </Btn>
+        <span className="eyebrow hidden md:block truncate">
+          {job.sourceLabel}
+          {job.employment ? ` · ${job.employment}` : ""}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <Btn
+            variant="ghost"
+            size="sm"
+            icon
+            onClick={() => onStatus("saved")}
+            title={job.status === "saved" ? "Убрать из избранного (S)" : "В избранное (S)"}
+            className={cx(job.status === "saved" && "text-warn")}
           >
-            Открыть вакансию ↗
-          </a>
-          <Btn variant="outline" onClick={() => onStatus("saved")} className={cx(job.status === "saved" && "text-warn")}>
-            {job.status === "saved" ? "★ В избранном" : "☆ В избранное"}
+            <IconStar size={15} filled={job.status === "saved"} />
           </Btn>
-          <Btn variant="outline" onClick={() => onStatus("applied")} className={cx(job.status === "applied" && "text-good")}>
-            {job.status === "applied" ? "✓ Откликнулся" : "Откликнулся"}
+          <Btn variant="ghost" size="sm" icon onClick={() => onStatus("hidden")} title={job.status === "hidden" ? "Вернуть" : "Скрыть (H)"}>
+            {job.status === "hidden" ? <IconUndo size={15} /> : <IconEyeOff size={15} />}
           </Btn>
-          <Btn variant="outline" onClick={() => onStatus("hidden")}>
-            {job.status === "hidden" ? "Вернуть" : "Скрыть"}
-          </Btn>
-          <Btn variant="outline" onClick={onAnalyze} disabled={analyzing}>
-            {analyzing ? "Анализ…" : ai ? "↻ Переоценить ИИ" : "✦ Оценить ИИ"}
+          <span className="w-px h-4 bg-line mx-1 hidden md:block" />
+          <Btn variant="ghost" size="sm" icon onClick={onClose} title="Закрыть (Esc)" className="hidden md:inline-flex">
+            <IconX size={15} />
           </Btn>
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin p-5 space-y-6">
-        {ai && (
-          <div className="rounded-xl border border-line bg-bg p-4 space-y-3">
-            <div className="flex items-center justify-between gap-3">
-              <h3 className="font-semibold">✦ Оценка ИИ: {ai.score}/100</h3>
-              <span
-                className={cx(
-                  "text-xs px-2 py-0.5 rounded font-medium",
-                  ai.kz === "yes" ? "bg-good-soft text-good" : ai.kz === "no" ? "bg-bad-soft text-bad" : "bg-warn-soft text-warn",
-                )}
-              >
-                {ai.kz === "yes" ? "Из КЗ можно" : ai.kz === "no" ? "Из КЗ нельзя" : "КЗ: неясно"}
-              </span>
-            </div>
-            <p className="font-medium">{ai.verdict}</p>
-            <p className="text-sm text-fg/85 leading-relaxed">{ai.summary}</p>
-            <div className="grid sm:grid-cols-2 gap-4 text-sm">
-              {ai.pros.length > 0 && (
-                <ul className="space-y-1">
-                  {ai.pros.map((p, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-good">+</span>
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {ai.cons.length > 0 && (
-                <ul className="space-y-1">
-                  {ai.cons.map((p, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-bad">−</span>
-                      {p}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            {ai.stack.length > 0 && (
-              <div className="flex flex-wrap gap-1.5">
-                {ai.stack.map((s) => (
-                  <span key={s} className="text-xs px-1.5 py-0.5 rounded bg-raised">
-                    {s}
-                  </span>
-                ))}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto scroll-thin">
+        <div className="px-5 sm:px-8 pt-7 pb-6">
+          <div className="flex items-start gap-5">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2.5">
+                <Logo src={job.companyLogo} name={job.company || job.title} size={28} />
+                <span className="text-[14px] text-fg-2 font-medium truncate">{job.company || "Компания не указана"}</span>
               </div>
-            )}
-            <p className="text-[11px] text-muted">
-              {ai.model} · {timeAgo(ai.at)} назад
-            </p>
+              <h1 className="font-serif text-[27px] sm:text-[31px] leading-[1.12] tracking-[-0.015em] mt-3 text-balance">{job.title}</h1>
+            </div>
+            <MatchMeter value={rank} ai={!!ai} size="lg" />
           </div>
-        )}
 
-        {job.tags.length > 0 && (
-          <div className="flex flex-wrap gap-1.5">
-            {job.tags.slice(0, 20).map((t) => (
-              <span
-                key={t}
-                className={cx(
-                  "text-xs px-2 py-0.5 rounded-full border",
-                  job.matched.some((m) => m.toLowerCase() === t.toLowerCase())
-                    ? "border-accent text-accent"
-                    : "border-line text-muted",
-                )}
-              >
-                {t}
-              </span>
+          <dl className="grid grid-cols-2 gap-px mt-6 rounded-xl overflow-hidden border border-line bg-line">
+            {facts.map(({ icon: I, label, value, mono }) => (
+              <div key={label} className="bg-panel px-3.5 py-3 min-w-0">
+                <dt className="flex items-center gap-1.5 text-[11.5px] text-muted">
+                  <I size={12} /> {label}
+                </dt>
+                <dd className={cx("mt-1 text-[13.5px] text-fg truncate", mono && "num")}>{value}</dd>
+              </div>
             ))}
-          </div>
-        )}
+          </dl>
 
-        {job.description ? (
-          <article className="prose-job" dangerouslySetInnerHTML={{ __html: job.description }} />
-        ) : (
-          <p className="text-muted text-sm">Описание недоступно — откройте вакансию по ссылке.</p>
-        )}
+          <div className="flex flex-wrap gap-2 mt-5">
+            <a
+              href={job.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-accent text-accent-fg text-[13.5px] font-medium hover:brightness-95 transition"
+            >
+              Открыть вакансию <IconExternal size={14} />
+            </a>
+            <Btn
+              className={cx("h-9", job.status === "applied" && "!border-good/40 !text-good")}
+              onClick={() => onStatus("applied")}
+            >
+              <IconCheck size={14} /> {job.status === "applied" ? "Отклик отправлен" : "Я откликнулся"}
+            </Btn>
+          </div>
+        </div>
+
+        {/* Заключение ИИ */}
+        <div className="px-5 sm:px-8">
+          {ai ? (
+            <section className="rounded-2xl border border-line bg-bg/60 overflow-hidden">
+              <header className="flex items-center gap-2 px-5 py-3 border-b border-line">
+                <IconSpark size={13} className="text-accent" />
+                <span className="eyebrow">Заключение ИИ</span>
+                <span className="num text-[11px] text-faint ml-auto truncate max-w-[45%]" title={ai.model}>
+                  {ai.model.split("/").pop()} · {timeAgo(ai.at)}
+                </span>
+              </header>
+              <div className="p-5 space-y-4">
+                <div className="flex items-start gap-4">
+                  <div className="text-center shrink-0">
+                    <div className={cx("num text-[34px] leading-none", ai.score >= 70 ? "text-good" : ai.score >= 45 ? "text-warn" : "text-muted")}>
+                      {ai.score}
+                    </div>
+                    <div className="eyebrow mt-1 !text-[9.5px]">из 100</div>
+                  </div>
+                  <div className="min-w-0">
+                    <p className="font-serif text-[19px] leading-snug text-fg">{ai.verdict}</p>
+                    <KzVerdict kz={ai.kz} />
+                  </div>
+                </div>
+                {ai.summary && <p className="text-[14px] leading-relaxed text-fg-2">{ai.summary}</p>}
+                {(ai.pros.length > 0 || ai.cons.length > 0) && (
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4 pt-1">
+                    <ProsCons title="Подходит" items={ai.pros} tone="good" />
+                    <ProsCons title="Смущает" items={ai.cons} tone="bad" />
+                  </div>
+                )}
+                {ai.stack.length > 0 && (
+                  <div className="flex flex-wrap gap-1 pt-1">
+                    {ai.stack.map((s) => (
+                      <span key={s} className="font-mono text-[11.5px] px-1.5 h-5 leading-5 rounded bg-raised text-fg-2">
+                        {s}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <footer className="px-5 py-2.5 border-t border-line flex justify-end">
+                <Btn variant="quiet" size="sm" onClick={onAnalyze} disabled={analyzing}>
+                  <IconRefresh size={12} className={cx(analyzing && "animate-spin")} />
+                  {analyzing ? "Переоцениваю…" : "Переоценить"}
+                </Btn>
+              </footer>
+            </section>
+          ) : (
+            <section className="rounded-2xl border border-dashed border-line-strong p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+              <div className="flex-1">
+                <p className="text-[14px] font-medium text-fg">Оценка ИИ</p>
+                <p className="text-[13px] text-muted mt-0.5 leading-snug">
+                  Модель сравнит вакансию с вашим резюме и проверит, реально ли попасть на неё из Казахстана.
+                </p>
+              </div>
+              <Btn onClick={onAnalyze} disabled={analyzing} className="h-9 shrink-0">
+                <IconSpark size={14} className={cx("text-accent", analyzing && "animate-pulse")} />
+                {analyzing ? "Анализирую…" : "Оценить"}
+                {!analyzing && <kbd className="ml-1">A</kbd>}
+              </Btn>
+            </section>
+          )}
+        </div>
+
+        {/* Описание */}
+        <div className="px-5 sm:px-8 pt-9 pb-14">
+          <div className="flex items-baseline justify-between mb-4">
+            <h2 className="eyebrow">Описание</h2>
+            {job.matched.length > 0 && (
+              <span className="text-[11.5px] text-muted">
+                <mark className="bg-accent-soft text-fg rounded-sm px-1">выделено</mark> — совпадения с вашими навыками
+              </span>
+            )}
+          </div>
+          {job.description ? (
+            <article className="prose-job" dangerouslySetInnerHTML={{ __html: html }} />
+          ) : (
+            <p className="text-[14px] text-muted">
+              Площадка не отдала текст описания.{" "}
+              <a href={job.url} target="_blank" rel="noopener noreferrer" className="text-fg underline decoration-accent underline-offset-2">
+                Откройте оригинал
+              </a>
+              .
+            </p>
+          )}
+          {tags.length > 0 && (
+            <div className="mt-8 pt-5 border-t border-line">
+              <h2 className="eyebrow mb-3">Теги площадки</h2>
+              <div className="flex flex-wrap gap-1.5">
+                {tags.slice(0, 24).map((t) => {
+                  const hit = job.matched.some((m) => m.toLowerCase() === t.toLowerCase());
+                  return (
+                    <span
+                      key={t}
+                      className={cx(
+                        "text-[12px] px-2 h-6 leading-6 rounded-md border",
+                        hit ? "border-accent/50 text-fg bg-accent-soft" : "border-line text-muted",
+                      )}
+                    >
+                      {t}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </>
   );
 }
 
-function Empty({ onScan, running }: { onScan: () => void; running: boolean }) {
+function KzVerdict({ kz }: { kz: "yes" | "no" | "unclear" }) {
+  const m = {
+    yes: ["text-good", "ИИ: из Казахстана можно"],
+    no: ["text-bad", "ИИ: из Казахстана нельзя"],
+    unclear: ["text-warn", "ИИ: доступность из КЗ неясна"],
+  } as const;
+  return <p className={cx("text-[12.5px] mt-1.5", m[kz][0])}>{m[kz][1]}</p>;
+}
+
+function ProsCons({ title, items, tone }: { title: string; items: string[]; tone: "good" | "bad" }) {
+  if (!items.length) return null;
+  const Icon = tone === "good" ? IconPlus : IconMinus;
   return (
-    <div className="max-w-md mx-auto text-center py-20 px-6 space-y-4">
-      <div className="text-4xl">🔎</div>
-      <h2 className="text-lg font-semibold">Пока пусто</h2>
-      <p className="text-sm text-muted">
-        Задайте ключевые слова и профиль в{" "}
-        <Link href="/settings" className="text-accent underline">
-          настройках
+    <div>
+      <h4 className="eyebrow mb-2">{title}</h4>
+      <ul className="space-y-1.5">
+        {items.map((p, i) => (
+          <li key={i} className="flex gap-2 text-[13.5px] leading-snug text-fg-2">
+            <Icon size={13} className={cx("shrink-0 mt-[3px]", tone === "good" ? "text-good" : "text-bad")} />
+            {p}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ───────── Состояния ───────── */
+
+function ListSkeleton() {
+  return (
+    <ul className="px-3 py-2">
+      {Array.from({ length: 7 }).map((_, i) => (
+        <li key={i} className="flex gap-3.5 px-3 py-4">
+          <div className="skeleton size-9 shrink-0" />
+          <div className="flex-1 space-y-2">
+            <div className="skeleton h-3.5" style={{ width: `${55 + ((i * 17) % 35)}%` }} />
+            <div className="skeleton h-3 w-2/5" />
+            <div className="skeleton h-3 w-1/4" />
+          </div>
+          <div className="skeleton w-8 h-5" />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function DetailSkeleton({ onClose }: { onClose: () => void }) {
+  return (
+    <>
+      <div className="flex items-center px-5 h-12 border-b border-line">
+        <div className="skeleton h-3 w-40" />
+        <Btn variant="ghost" size="sm" icon onClick={onClose} className="ml-auto" aria-label="Закрыть">
+          <IconX size={15} />
+        </Btn>
+      </div>
+      <div className="px-8 pt-7 space-y-4">
+        <div className="skeleton h-4 w-32" />
+        <div className="skeleton h-8 w-4/5" />
+        <div className="skeleton h-8 w-3/5" />
+        <div className="skeleton h-28 w-full mt-6 rounded-xl" />
+        <div className="space-y-2.5 pt-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} className="skeleton h-3" style={{ width: `${70 + ((i * 13) % 30)}%` }} />
+          ))}
+        </div>
+      </div>
+    </>
+  );
+}
+
+function EmptyFirstRun({ scanning }: { scanning: boolean }) {
+  const steps = [
+    ["Вставьте резюме", "В настройках — ИИ сам подберёт ключевые слова, стоп-слова и уровень."],
+    ["Запустите скан", "14 площадок: hh, LinkedIn, сайты компаний, доски удалёнки и web3."],
+    ["Разберите лучшие", "Сортировка по соответствию, оценка ИИ, фильтр по доступности из КЗ."],
+  ];
+  return (
+    <div className="max-w-lg mx-auto px-6 py-16">
+      <p className="eyebrow">Первый запуск</p>
+      <h2 className="font-serif text-[32px] leading-tight mt-2">Найдём удалёнку, на которую реально попасть из Казахстана</h2>
+      <ol className="mt-8 space-y-5">
+        {steps.map(([t, d], i) => (
+          <li key={t} className="flex gap-4">
+            <span className="num text-[13px] text-accent pt-0.5">0{i + 1}</span>
+            <div>
+              <p className="text-[14px] font-medium">{t}</p>
+              <p className="text-[13px] text-muted mt-0.5 leading-snug">{d}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <div className="flex gap-2 mt-9">
+        <Link
+          href="/settings"
+          className="inline-flex items-center h-9 px-4 rounded-lg bg-fg text-bg text-[13.5px] font-medium hover:bg-fg-2"
+        >
+          Открыть настройки
         </Link>
-        , затем запустите сканирование — вакансии подтянутся с 9+ площадок.
-      </p>
-      <Btn variant="primary" onClick={onScan} disabled={running}>
-        {running ? "Сканирую…" : "Сканировать сейчас"}
-      </Btn>
+        <Btn className="h-9" onClick={triggerScan} disabled={scanning}>
+          <IconRefresh size={14} className={cx(scanning && "animate-spin")} />
+          {scanning ? "Сканирую…" : "Сканировать сразу"}
+        </Btn>
+      </div>
     </div>
   );
 }

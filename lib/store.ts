@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { AiVerdict, DEFAULT_SETTINGS, Job, Settings } from "./types";
+import { AiVerdict, DEFAULT_SETTINGS, Job, ScanProgress, Settings } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
@@ -9,6 +9,7 @@ interface Db {
   settings: Settings;
   jobs: Record<string, Job>;
   aiCache: Record<string, AiVerdict>; // ключ: название+компания, переживает удаление вакансий
+  lastScan?: ScanProgress; // итог последнего скана — чтобы шапка помнила его после перезапуска
 }
 
 // Кэш в памяти процесса, переживает HMR в dev
@@ -28,6 +29,7 @@ function load(): Db {
         },
         jobs: parsed.jobs ?? {},
         aiCache: parsed.aiCache ?? {},
+        lastScan: parsed.lastScan,
       };
     }
   } catch (e) {
@@ -109,4 +111,13 @@ export function getCachedAi(key: string): AiVerdict | undefined {
 export function putCachedAi(key: string, ai: AiVerdict) {
   load().aiCache[key] = ai;
   save();
+}
+
+export function getLastScan(): ScanProgress | undefined {
+  return load().lastScan;
+}
+
+export function setLastScan(p: ScanProgress) {
+  load().lastScan = p;
+  save(true);
 }

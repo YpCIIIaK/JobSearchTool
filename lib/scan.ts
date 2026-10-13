@@ -1,7 +1,7 @@
 import { analyzeIds, cachedVerdict } from "./analyze";
 import { rescore, salaryUsdMonth, scoreJob } from "./score";
 import { SOURCES } from "./sources";
-import { allJobs, getSettings, putJob, save, updateJob } from "./store";
+import { allJobs, getLastScan, getSettings, putJob, save, setLastScan, updateJob } from "./store";
 import { Job, ScanProgress, SourceId } from "./types";
 import { hash, normKey } from "./util";
 
@@ -9,7 +9,8 @@ const g = globalThis as unknown as { __jfScan?: ScanProgress };
 
 export function getProgress(): ScanProgress {
   return (
-    g.__jfScan ?? { running: false, phase: "idle", sources: {}, added: 0, updated: 0, analyzed: 0, analyzeTotal: 0 }
+    g.__jfScan ??
+    getLastScan() ?? { running: false, phase: "idle", sources: {}, added: 0, updated: 0, analyzed: 0, analyzeTotal: 0 }
   );
 }
 
@@ -122,6 +123,7 @@ async function run(enabled: SourceId[]) {
   p.phase = "Готово";
   p.running = false;
   p.finishedAt = new Date().toISOString();
+  setLastScan(p);
 }
 
 export function rescoreAll() {
