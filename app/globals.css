@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f6f7f9;
+  --color-panel: #ffffff;
+  --color-raised: #f0f2f5;
+  --color-fg: #14171c;
+  --color-muted: #5f6b7a;
+  --color-line: #e3e7ec;
+  --color-accent: #4f46e5;
+  --color-accent-fg: #ffffff;
+  --color-accent-soft: #eef0ff;
+  --color-good: #15803d;
+  --color-good-soft: #e7f6ec;
+  --color-warn: #b45309;
+  --color-warn-soft: #fdf3e2;
+  --color-bad: #b91c1c;
+  --color-bad-soft: #fde9e9;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0d0f13;
+    --color-panel: #14171d;
+    --color-raised: #1b1f27;
+    --color-fg: #e8ebf0;
+    --color-muted: #8b95a5;
+    --color-line: #262b35;
+    --color-accent: #818cf8;
+    --color-accent-fg: #0d0f13;
+    --color-accent-soft: #1f2240;
+    --color-good: #4ade80;
+    --color-good-soft: #13281c;
+    --color-warn: #fbbf24;
+    --color-warn-soft: #2b2312;
+    --color-bad: #f87171;
+    --color-bad-soft: #2d1717;
+  }
+}
+
+html,
+body {
+  background: var(--color-bg);
+  color: var(--color-fg);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-accent-soft);
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
+
+/* Описание вакансии */
+.prose-job {
+  font-size: 14.5px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.prose-job p,
+.prose-job ul,
+.prose-job ol,
+.prose-job blockquote,
+.prose-job pre,
+.prose-job table {
+  margin: 0 0 0.85em;
+}
+.prose-job h3,
+.prose-job h4,
+.prose-job h5 {
+  font-weight: 650;
+  margin: 1.2em 0 0.5em;
+  font-size: 15.5px;
+}
+.prose-job ul {
+  list-style: disc;
+  padding-left: 1.3em;
+}
+.prose-job ol {
+  list-style: decimal;
+  padding-left: 1.3em;
+}
+.prose-job li {
+  margin: 0.2em 0;
+}
+.prose-job a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-job strong,
+.prose-job b {
+  font-weight: 650;
+}
+.prose-job code {
+  background: var(--color-raised);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.prose-job blockquote {
+  border-left: 3px solid var(--color-line);
+  padding-left: 0.9em;
+  color: var(--color-muted);
+}
+.prose-job td,
+.prose-job th {
+  border: 1px solid var(--color-line);
+  padding: 4px 8px;
+}
