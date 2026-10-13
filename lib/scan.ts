@@ -116,7 +116,7 @@ async function run(enabled: SourceId[]) {
       .sort((a, b) => b.score - a.score)
       .filter((j) => !j.ai)
       .slice(0, s.aiAutoTop);
-    p.phase = "ИИ-анализ лучших";
+    p.phase = "ИИ проверяет лучшие";
     p.analyzeTotal = top.length;
     const r = await analyzeIds(top.map((j) => j.id), { onProgress: (n) => (p.analyzed = n) });
     if (r.error) console.warn("[ai]", r.error);

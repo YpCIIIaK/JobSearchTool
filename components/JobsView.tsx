@@ -25,11 +25,13 @@ import {
 } from "./icons";
 import { Btn, cx, dayBucket, fmtDate, GeoTag, Logo, MatchMeter, Segmented, Switch, timeAgo } from "./ui";
 
-type ListJob = Omit<Job, "description"> & { rank: number };
+type AiState = "none" | "done" | "stale";
+type ListJob = Omit<Job, "description"> & { rank: number; aiState: AiState };
 interface ListResp {
   total: number;
   counts: Record<JobStatus | "total", number>;
   sources: Record<string, number>;
+  checks: Record<AiState, number>;
   jobs: ListJob[];
 }
 type Filters = {
@@ -39,7 +41,7 @@ type Filters = {
   geo: string;
   minScore: number;
   sort: "rank" | "date" | "salary";
-  ai: boolean;
+  check: "" | "done" | "todo";
   salary: boolean;
 };
 
@@ -65,7 +67,7 @@ export default function JobsView() {
     geo: "ok,maybe",
     minScore: 0,
     sort: "rank",
-    ai: false,
+    check: "",
     salary: false,
   });
   const [data, setData] = useState<ListResp | null>(null);
@@ -103,7 +105,7 @@ export default function JobsView() {
       geo: filters.geo,
       minScore: String(filters.minScore),
       sort: filters.sort,
-      ai: filters.ai ? "1" : "",
+      check: filters.check,
       salary: filters.salary ? "1" : "",
     });
     const r = await fetch(`/api/jobs?${p}`);
@@ -191,7 +193,7 @@ export default function JobsView() {
               .map((x) => {
                 const ai = results[x.id];
                 return ai
-                  ? { ...x, ai, rank: Math.round(ai.score * 0.7 + x.score * 0.3), ...(rejectedIds.has(x.id) ? { status: "hidden" as const, hiddenBy: "ai" as const } : {}) }
+                  ? { ...x, ai, aiState: "done" as const, rank: Math.round(ai.score * 0.7 + x.score * 0.3), ...(rejectedIds.has(x.id) ? { status: "hidden" as const, hiddenBy: "ai" as const } : {}) }
                   : x;
               }),
           },
@@ -213,10 +215,12 @@ export default function JobsView() {
     }
   };
 
-  const analyze = (id: string) => analyzeMany([id], !!jobs.find((j) => j.id === id)?.ai);
+  // Повторная проверка уже проверенной (актуальной) вакансии обходит кэш
+  const analyze = (id: string) => analyzeMany([id], jobs.find((j) => j.id === id)?.aiState === "done");
 
   const analyzeTop = async (n: number) => {
-    const targets = jobs.filter((j) => !j.ai).slice(0, n).map((j) => j.id);
+    // Берём следующие по текущему порядку списка, ещё не проверенные или с устаревшей проверкой
+    const targets = jobs.filter((j) => j.aiState !== "done").slice(0, n).map((j) => j.id);
     setBulk({ done: 0, total: targets.length });
     for (let i = 0; i < targets.length; i += 5) {
       const ok = await analyzeMany(targets.slice(i, i + 5));
@@ -263,7 +267,7 @@ export default function JobsView() {
   const f = (patch: Partial<Filters>) => setFilters((x) => ({ ...x, ...patch }));
   const aiCount = jobs.filter((j) => j.ai).length;
   const activeFilters =
-    (filters.source ? 1 : 0) + (filters.geo !== "ok,maybe" ? 1 : 0) + (filters.minScore ? 1 : 0) + (filters.ai ? 1 : 0) + (filters.salary ? 1 : 0);
+    (filters.source ? 1 : 0) + (filters.geo !== "ok,maybe" ? 1 : 0) + (filters.minScore ? 1 : 0) + (filters.check ? 1 : 0) + (filters.salary ? 1 : 0);
 
   // Группы по давности — только при сортировке по дате
   const groups = useMemo(() => {
@@ -283,7 +287,8 @@ export default function JobsView() {
       filters={filters}
       f={f}
       sources={data?.sources ?? {}}
-      onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, ai: false, salary: false })}
+      checks={data?.checks}
+      onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: false })}
       activeCount={activeFilters}
     />
   );
@@ -322,20 +327,6 @@ export default function JobsView() {
               <span className="hidden sm:inline">Фильтры</span>
               {activeFilters > 0 && <span className="num text-accent">{activeFilters}</span>}
             </Btn>
-            <Btn
-              onClick={() => analyzeTop(10)}
-              disabled={!!bulk || !jobs.some((j) => !j.ai)}
-              title="Оценить ИИ первые 10 вакансий без оценки (2 запроса к модели)"
-            >
-              <IconSpark size={14} className="text-accent" />
-              {bulk ? (
-                <span className="num">
-                  {bulk.done}/{bulk.total}
-                </span>
-              ) : (
-                <span className="hidden sm:inline">Оценить топ-10</span>
-              )}
-            </Btn>
           </div>
 
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
@@ -372,18 +363,15 @@ export default function JobsView() {
 
         <div className="flex-1 overflow-y-auto scroll-thin">
           {data && data.counts.total > 0 && jobs.length > 0 && (
-            <div className="px-5 pt-3 pb-1 text-[12px] text-muted flex gap-3">
-              <span>
-                <span className="num text-fg-2">{data.total}</span> {plural(data.total, "вакансия", "вакансии", "вакансий")}
-              </span>
-              {aiCount > 0 && (
-                <span className="flex items-center gap-1">
-                  <IconSpark size={11} className="text-accent" />
-                  <span className="num text-fg-2">{aiCount}</span> с оценкой ИИ
-                </span>
-              )}
-              {data.total > jobs.length && <span>показаны первые {jobs.length}</span>}
-            </div>
+            <CheckSummary
+              total={data.total}
+              shown={jobs.length}
+              checks={data.checks}
+              bulk={bulk}
+              onCheck={() => analyzeTop(10)}
+              onFilter={(v) => f({ check: v })}
+              filter={filters.check}
+            />
           )}
 
           {!data ? (
@@ -395,7 +383,7 @@ export default function JobsView() {
               <p className="font-serif text-[22px]">Ничего не нашлось</p>
               <p className="text-[13px] text-muted mt-1.5">Ослабьте фильтры или измените запрос.</p>
               {activeFilters > 0 && (
-                <Btn className="mt-4" onClick={() => f({ source: "", geo: "ok,maybe", minScore: 0, ai: false, salary: false })}>
+                <Btn className="mt-4" onClick={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: false })}>
                   Сбросить фильтры
                 </Btn>
               )}
@@ -433,6 +421,7 @@ export default function JobsView() {
           {detail && detail.id === selected ? (
             <Detail
               job={detail}
+              stale={jobs.find((j) => j.id === detail.id)?.aiState === "stale"}
               analyzing={analyzing.has(detail.id)}
               onStatus={(s) => setStatus(detail.id, s)}
               onAnalyze={() => analyze(detail.id)}
@@ -485,12 +474,14 @@ function FilterPanel({
   filters,
   f,
   sources,
+  checks,
   onReset,
   activeCount,
 }: {
   filters: Filters;
   f: (p: Partial<Filters>) => void;
   sources: Record<string, number>;
+  checks?: Record<AiState, number>;
   onReset: () => void;
   activeCount: number;
 }) {
@@ -536,9 +527,27 @@ function FilterPanel({
         </div>
       </FilterGroup>
 
+      <FilterGroup title="Проверка ИИ">
+        {(
+          [
+            ["", "Все вакансии"],
+            ["done", "Проверены ИИ"],
+            ["todo", "Не проверены"],
+          ] as const
+        ).map(([v, l]) => (
+          <Option
+            key={v}
+            checked={filters.check === v}
+            onClick={() => f({ check: v })}
+            count={checks ? (v === "done" ? checks.done : v === "todo" ? checks.none + checks.stale : undefined) : undefined}
+          >
+            {l}
+          </Option>
+        ))}
+      </FilterGroup>
+
       <FilterGroup title="Показывать">
         <div className="space-y-3 pt-1">
-          <Switch checked={filters.ai} onChange={(v) => f({ ai: v })} label="Только с оценкой ИИ" />
           <Switch checked={filters.salary} onChange={(v) => f({ salary: v })} label="Только с зарплатой" />
         </div>
       </FilterGroup>
@@ -666,6 +675,19 @@ function JobRow({
               <IconCheck size={12} /> Отклик
             </span>
           )}
+          {job.aiState !== "done" && !analyzing && (
+            <span
+              className={cx("flex items-center gap-1 text-[11.5px]", job.aiState === "stale" ? "text-warn" : "text-faint")}
+              title={
+                job.aiState === "stale"
+                  ? "Резюме или правила отсева изменились после проверки — оценка и отсев могут быть неактуальны"
+                  : "ИИ ещё не проверял: нет оценки по резюме, правила отсева не применялись"
+              }
+            >
+              <span className={cx("size-[7px] rounded-full border", job.aiState === "stale" ? "border-warn" : "border-faint")} />
+              {job.aiState === "stale" ? "Проверка устарела" : "ИИ не проверял"}
+            </span>
+          )}
           <span className="text-[11.5px] text-faint num ml-auto sm:ml-0">
             {job.sourceLabel.replace(/ · (Greenhouse|Lever|Ashby)$/, "")} · {timeAgo(job.postedAt ?? job.firstSeenAt)}
           </span>
@@ -752,12 +774,14 @@ function highlight(html: string, words: string[]): string {
 
 function Detail({
   job,
+  stale,
   analyzing,
   onStatus,
   onAnalyze,
   onClose,
 }: {
   job: Job;
+  stale?: boolean;
   analyzing: boolean;
   onStatus: (s: JobStatus) => void;
   onAnalyze: () => void;
@@ -879,7 +903,15 @@ function Detail({
             <section className="rounded-2xl border border-line bg-bg/60 overflow-hidden">
               <header className="flex items-center gap-2 px-5 py-3 border-b border-line">
                 <IconSpark size={13} className="text-accent" />
-                <span className="eyebrow">Заключение ИИ</span>
+                <span className="eyebrow">Проверка ИИ</span>
+                {stale && (
+                  <span
+                    className="text-[11px] text-warn bg-warn-soft rounded px-1.5 h-5 leading-5"
+                    title="Резюме или правила отсева изменились после этой проверки"
+                  >
+                    устарела
+                  </span>
+                )}
                 <span className="num text-[11px] text-faint ml-auto truncate max-w-[45%]" title={ai.model}>
                   {ai.model.split("/").pop()} · {timeAgo(ai.at)}
                 </span>
@@ -917,21 +949,22 @@ function Detail({
               <footer className="px-5 py-2.5 border-t border-line flex justify-end">
                 <Btn variant="quiet" size="sm" onClick={onAnalyze} disabled={analyzing}>
                   <IconRefresh size={12} className={cx(analyzing && "animate-spin")} />
-                  {analyzing ? "Переоцениваю…" : "Переоценить"}
+                  {analyzing ? "Проверяю…" : stale ? "Проверить заново" : "Перепроверить"}
                 </Btn>
               </footer>
             </section>
           ) : (
             <section className="rounded-2xl border border-dashed border-line-strong p-5 flex flex-col sm:flex-row sm:items-center gap-4">
               <div className="flex-1">
-                <p className="text-[14px] font-medium text-fg">Оценка ИИ</p>
+                <p className="text-[14px] font-medium text-fg">ИИ ещё не проверял эту вакансию</p>
                 <p className="text-[13px] text-muted mt-0.5 leading-snug">
-                  Модель сравнит вакансию с вашим резюме и проверит, реально ли попасть на неё из Казахстана.
+                  Проверка — это оценка по вашему резюме, доступность из Казахстана и ваши правила отсева. Пока её нет,
+                  рейтинг считается только по ключевым словам.
                 </p>
               </div>
               <Btn onClick={onAnalyze} disabled={analyzing} className="h-9 shrink-0">
                 <IconSpark size={14} className={cx("text-accent", analyzing && "animate-pulse")} />
-                {analyzing ? "Анализирую…" : "Оценить"}
+                {analyzing ? "Проверяю…" : "Проверить"}
                 {!analyzing && <kbd className="ml-1">A</kbd>}
               </Btn>
             </section>
@@ -1090,6 +1123,99 @@ function EmptyFirstRun({ scanning }: { scanning: boolean }) {
           {scanning ? "Сканирую…" : "Сканировать сразу"}
         </Btn>
       </div>
+    </div>
+  );
+}
+
+/* ───────── Сводка проверки ИИ ───────── */
+
+function CheckSummary({
+  total,
+  shown,
+  checks,
+  bulk,
+  onCheck,
+  onFilter,
+  filter,
+}: {
+  total: number;
+  shown: number;
+  checks: Record<AiState, number>;
+  bulk: { done: number; total: number } | null;
+  onCheck: () => void;
+  onFilter: (v: Filters["check"]) => void;
+  filter: Filters["check"];
+}) {
+  const all = checks.done + checks.none + checks.stale;
+  const todo = checks.none + checks.stale;
+  const pct = all ? (checks.done / all) * 100 : 0;
+  const [help, setHelp] = useState(false);
+  return (
+    <div className="mx-4 sm:mx-5 mt-3 mb-1 rounded-xl border border-line bg-panel px-4 py-3">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="flex items-center gap-2 text-[13px]">
+          <IconSpark size={13} className="text-accent" />
+          <span className="text-fg-2">
+            ИИ проверил{" "}
+            <button onClick={() => onFilter(filter === "done" ? "" : "done")} className="num text-fg underline decoration-line-strong underline-offset-2 hover:decoration-fg">
+              {checks.done}
+            </button>{" "}
+            из <span className="num">{all}</span>
+          </span>
+          {todo > 0 && (
+            <>
+              <span className="text-faint">·</span>
+              <button onClick={() => onFilter(filter === "todo" ? "" : "todo")} className="text-muted hover:text-fg">
+                <span className="num">{todo}</span> не проверены
+                {checks.stale > 0 && <span className="text-warn"> (из них {checks.stale} устарели)</span>}
+              </button>
+            </>
+          )}
+          <button
+            onClick={() => setHelp(!help)}
+            className={cx("size-5 grid place-items-center rounded-full border text-[11px] ml-0.5", help ? "border-fg text-fg" : "border-line-strong text-muted hover:text-fg")}
+            aria-label="Что такое проверка ИИ"
+          >
+            ?
+          </button>
+        </div>
+        {todo > 0 && (
+          <Btn size="sm" onClick={onCheck} disabled={!!bulk} className="ml-auto">
+            {bulk ? (
+              <>
+                <IconSpark size={12} className="text-accent animate-pulse" />
+                Проверяю <span className="num">{bulk.done}/{bulk.total}</span>
+              </>
+            ) : (
+              <>Проверить следующие {Math.min(10, todo)}</>
+            )}
+          </Btn>
+        )}
+      </div>
+      <div className="mt-2.5 h-[3px] rounded-full bg-raised overflow-hidden">
+        <div className="h-full bg-accent transition-[width] duration-500" style={{ width: `${pct}%` }} />
+      </div>
+      {help && (
+        <div className="mt-3 pt-3 border-t border-line grid sm:grid-cols-2 gap-x-6 gap-y-2 text-[12.5px] leading-snug text-muted animate-fade-in">
+          <p>
+            <b className="text-fg-2 font-medium">Без проверки</b> работают только ключевые слова, стоп-слова и гео-фильтр. Рейтинг — по
+            совпадениям слов.
+          </p>
+          <p>
+            <b className="text-fg-2 font-medium">Проверка ИИ</b> читает вакансию целиком: оценка по резюме, доступность из КЗ и ваши
+            правила отсева. Нарушителей скрывает.
+          </p>
+          <p>
+            <b className="text-fg-2 font-medium">Когда проверяется:</b> сразу после скана — лучшие новые (сколько — в настройках), остальные
+            — этой кнопкой, по 5 за запрос.
+          </p>
+          <p>
+            <b className="text-warn font-medium">Устарела</b> — вы изменили резюме, ключевые слова или правила после проверки. Нажмите
+            «Проверить», чтобы обновить.
+          </p>
+        </div>
+      )}
+      {total > shown && <p className="mt-2 text-[11.5px] text-faint">Показаны первые {shown} из {total}</p>}
     </div>
   );
 }

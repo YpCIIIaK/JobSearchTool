@@ -25,7 +25,8 @@ export async function habr(s: Settings): Promise<RawJob[]> {
         location: "Удалённо",
         geo: "maybe",
         tags: skills ? skills.split(",").map((t) => t.trim().replace(/^#/, "")) : [],
-        salary: m?.[2],
+        // В скобках бывает и город — зарплатой считаем только текст с цифрами
+        salary: m?.[2] && /\d/.test(m[2]) ? m[2] : undefined,
         description: textToHtml(desc),
         postedAt: toIso(it.pubDate),
       });

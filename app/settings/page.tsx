@@ -63,13 +63,21 @@ export default function SettingsPage() {
   const [extractError, setExtractError] = useState<string | null>(null);
   const [suggestion, setSuggestion] = useState<ProfileSuggestion | null>(null);
   const [section, setSection] = useState("resume");
+  const [checks, setChecks] = useState<{ done: number; none: number; stale: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
 
   useEffect(() => {
     fetch("/api/settings").then((r) => r.json()).then(setS);
     fetch("/api/models").then((r) => r.json()).then(setModels).catch(() => {});
+    loadChecks();
   }, []);
+
+  const loadChecks = () =>
+    fetch("/api/jobs?geo=ok,maybe")
+      .then((r) => r.json())
+      .then((d) => setChecks(d.checks))
+      .catch(() => {});
 
   // Подсветка текущего раздела в оглавлении
   const loaded = !!s;
@@ -109,6 +117,7 @@ export default function SettingsPage() {
     setS(await r.json());
     setSaved("done");
     setDirty(false);
+    loadChecks();
     setTimeout(() => setSaved("idle"), 2200);
   };
 
@@ -258,7 +267,10 @@ export default function SettingsPage() {
                 </select>
               </Field>
             </div>
-            <Field label="Автоанализ после скана" hint="Сколько лучших новых вакансий сразу оценивать. Уходят пачками по 5 в одном запросе.">
+            <Field
+              label="Проверять ИИ сразу после скана"
+              hint="Сколько лучших новых вакансий ИИ проверит автоматически после каждого скана. Остальные — кнопкой «Проверить ИИ» в списке."
+            >
               <Segmented
                 value={String(s.aiAutoTop)}
                 onChange={(v) => up({ aiAutoTop: Number(v) })}
@@ -267,14 +279,19 @@ export default function SettingsPage() {
             </Field>
             <Field
               label="Правила отсева"
-              hint="Пишите своими словами. ИИ проверяет их при оценке на любом языке вакансии и скрывает нарушителей, только если нашёл в тексте явное подтверждение (оно сохраняется цитатой). Избранное и отклики не скрываются."
+              hint="Пишите своими словами. Применяются при проверке ИИ на любом языке вакансии: нарушителя скрывает, только если нашёл в тексте явное подтверждение (сохраняется цитатой). Избранное и отклики не скрываются. Без проверки ИИ правила не работают — для мгновенного отсева по точному слову есть «Исключить» ниже."
             >
               <RulesEditor value={s.aiRejectRules} onChange={(v) => up({ aiRejectRules: v })} />
             </Field>
-            {s.aiRejectRules.length > 0 && s.aiAutoTop === 0 && (
-              <p className="text-[12.5px] text-warn bg-warn-soft rounded-lg px-3 py-2 -mt-2">
-                Правила срабатывают только на оценённых ИИ вакансиях. Включите автоанализ выше или жмите «Оценить топ-10».
-              </p>
+            {checks && (
+              <div className="-mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[12.5px] rounded-lg bg-raised/60 px-3 py-2">
+                <span className="text-fg-2">
+                  Сейчас ИИ проверил <span className="num text-fg">{checks.done}</span> из{" "}
+                  <span className="num">{checks.done + checks.none + checks.stale}</span> вакансий
+                </span>
+                {checks.stale > 0 && <span className="text-warn">{checks.stale} проверок устарели</span>}
+                {dirty && <span className="text-muted">Изменения резюме, ключевых слов или правил после сохранения сделают текущие проверки устаревшими</span>}
+              </div>
             )}
           </Section>
 

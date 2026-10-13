@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { profileHash } from "@/lib/ai";
 import { allJobs, deleteJobs, getSettings } from "@/lib/store";
 import { Job, rank } from "@/lib/types";
 
@@ -12,7 +13,7 @@ export async function GET(req: Request) {
   const source = sp.get("source") ?? "";
   const geo = sp.get("geo") ?? (s.hideGeoRestricted ? "ok,maybe" : "");
   const minScore = Number(sp.get("minScore") ?? 0);
-  const onlyAi = sp.get("ai") === "1";
+  const check = sp.get("check") ?? ""; // done — проверены ИИ, todo — не проверены или проверка устарела
   const sort = sp.get("sort") ?? "rank";
   const salary = sp.get("salary") === "1";
 
@@ -20,17 +21,24 @@ export async function GET(req: Request) {
   const counts = { new: 0, saved: 0, applied: 0, hidden: 0, total: all.length };
   for (const j of all) counts[j.status]++;
   const sources: Record<string, number> = {};
+  // Проверка ИИ актуальна, пока не менялись резюме, ключевые слова и правила отсева
+  const ph = profileHash(s);
+  const aiState = (j: Job) => (!j.ai ? "none" : j.ai.profileHash === ph ? "done" : "stale");
+  const checks = { done: 0, none: 0, stale: 0 };
 
   let list = all.filter((j) => {
     if (status === "active" ? j.status === "hidden" : j.status !== status) return false;
     if (geo && !geo.split(",").includes(j.geo)) return false;
     if (rank(j) < minScore) return false;
-    if (onlyAi && !j.ai) return false;
     if (salary && !j.salary && !j.ai?.salary) return false;
     if (s.minSalaryUsd && j.salaryUsdMonth && j.salaryUsdMonth < s.minSalaryUsd) return false;
     if (q && !`${j.title} ${j.company} ${j.tags.join(" ")} ${j.location}`.toLowerCase().includes(q)) return false;
     sources[j.source] = (sources[j.source] ?? 0) + 1;
     if (source && j.source !== source) return false;
+    const st = aiState(j);
+    checks[st]++;
+    if (check === "done" && st !== "done") return false;
+    if (check === "todo" && st === "done") return false;
     return true;
   });
 
@@ -45,7 +53,8 @@ export async function GET(req: Request) {
     total,
     counts,
     sources,
-    jobs: list.map(({ description, ...rest }) => ({ ...rest, rank: rank(rest as Job) })),
+    checks,
+    jobs: list.map(({ description, ...rest }) => ({ ...rest, rank: rank(rest as Job), aiState: aiState(rest as Job) })),
   });
 }
 
