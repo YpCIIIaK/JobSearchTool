@@ -209,3 +209,29 @@ kbd {
   border-radius: 2px;
   padding: 0 2px;
 }
+
+/* Печать резюме в PDF: без шапки, без ограничений высоты, A4 */
+@page {
+  size: A4;
+  margin: 14mm 16mm;
+}
+@media print {
+  body > header,
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body,
+  main {
+    height: auto !important;
+    overflow: visible !important;
+    background: #fff !important;
+  }
+  body {
+    display: block !important;
+  }
+  .resume-doc {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

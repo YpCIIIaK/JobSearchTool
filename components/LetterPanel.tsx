@@ -97,16 +97,14 @@ export default function LetterPanel({ job, onLetter }: { job: Job; onLetter: (l:
   );
 
   return (
-    <section className="rounded-2xl border border-line overflow-hidden">
-      <header className="flex items-center gap-2 px-5 py-3 border-b border-line bg-bg/60">
-        <span className="eyebrow">Отклик</span>
-        {letter && (
-          <span className="num text-[11px] text-faint ml-auto truncate">
-            {letter.edited ? "изменено вами · " : ""}
-            {letter.model.split("/").pop()} · {timeAgo(letter.at)}
-          </span>
-        )}
-      </header>
+    // Встраивается во вкладку «Письмо» блока «Отклик»
+    <div>
+      {letter && (
+        <p className="num text-[11px] text-faint px-5 pt-3 -mb-2 text-right truncate">
+          {letter.edited ? "изменено вами · " : ""}
+          {letter.model.split("/").pop()} · {timeAgo(letter.at)}
+        </p>
+      )}
 
       {!letter && !busy ? (
         <div className="p-5 space-y-3">
@@ -215,6 +213,6 @@ export default function LetterPanel({ job, onLetter }: { job: Job; onLetter: (l:
           </div>
         )
       )}
-    </section>
+    </div>
   );
 }

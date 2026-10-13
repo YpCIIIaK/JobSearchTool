@@ -2,7 +2,7 @@
 
 **RU** · [EN](#english)
 
-Локальный агрегатор удалённых вакансий. Собирает вакансии с 16 площадок, ранжирует их по вашему резюме, проверяет ИИ (бесплатно через OpenRouter или через свой API) и пишет сопроводительные письма. Отдельно проверяет, можно ли работать из Казахстана.
+Локальный агрегатор удалённых вакансий. Собирает вакансии с 21 площадки, ранжирует их по вашему резюме, проверяет ИИ (бесплатно через OpenRouter или через свой API) и пишет сопроводительные письма. Отдельно проверяет, можно ли работать из Казахстана.
 
 Как всё устроено и куда что подключается: [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
@@ -26,7 +26,7 @@ npm start
 2. Нажмите **«✦ Настроить поиск по резюме»**. ИИ заполнит ключевые слова, стоп-слова, уровень и зарплату. Проверьте их и нажмите **«Сохранить и сканировать»**.
 3. **Вакансии.** Список отсортирован по соответствию. По клику открывается полное описание, оценка ИИ, плюсы и минусы, отметка о доступности из КЗ.
 4. **«Проверить следующие 10»** над списком: ИИ оценит вакансии по резюме и применит ваши **правила отсева**, например «требуется 3+ года опыта». Нарушителей скроет с цитатой-доказательством.
-5. В карточке вакансии есть блок **«Отклик»**: письмо на языке вакансии и ответы для формы. Только факты из резюме, недостающее помечено `[уточнить: …]`.
+5. В карточке вакансии есть блок **«Отклик»** с тремя вкладками: письмо и ответы для формы, **резюме под вакансию** с экспортом в PDF и **подготовка к интервью**. Только факты из резюме, недостающее помечено `[уточнить: …]`.
 6. Отмечайте вакансии: в избранное, «Откликнулся», «Скрыть».
 
 Горячие клавиши: `J`/`K` — навигация, `S` — в избранное, `H` — скрыть, `A` — ИИ, `O` — открыть оригинал.
@@ -56,7 +56,7 @@ npm start
 
 ## English
 
-Local aggregator for remote jobs. It collects openings from 16 sources, ranks them against your resume, checks them with AI (free via OpenRouter or with your own API) and writes cover letters. It also checks whether a job can be done from Kazakhstan.
+Local aggregator for remote jobs. It collects openings from 21 sources, ranks them against your resume, checks them with AI (free via OpenRouter or with your own API) and writes cover letters. It also checks whether a job can be done from Kazakhstan.
 
 How it all fits together: [HOW_IT_WORKS.md](HOW_IT_WORKS.md).
 
@@ -80,7 +80,7 @@ Open http://localhost:3100. On Windows you can run `start.bat` instead.
 2. Click **"✦ Set up search from resume"**. The AI fills in keywords, exclusions, seniority and minimum salary. Review them, then click **"Save and scan"**.
 3. **Jobs.** The list is sorted by match. Clicking a job shows the full description, the AI verdict with pros and cons, and the Kazakhstan eligibility check.
 4. **"Check next 10"** above the list: the AI scores jobs against your resume and applies your plain-language **reject rules**, such as "requires 3+ years". Matching jobs are hidden together with a quote that proves the rule.
-5. The **"Отклик"** block in a job card writes a cover letter in the job's language plus answers to common form questions. It uses only facts from your resume and marks missing ones as `[уточнить: …]`.
+5. The **"Отклик"** block in a job card has three tabs: a cover letter with answers for the form, a **resume tailored to the job** with PDF export, and **interview prep**. All three use only facts from your resume.
 6. Mark jobs as saved, applied or hidden.
 
 Hotkeys: `J`/`K` to navigate, `S` to save, `H` to hide, `A` to run AI, `O` to open the original posting.

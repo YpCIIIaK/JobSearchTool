@@ -1,3 +1,5 @@
+import type { InterviewPrep, TailoredResume } from "./ai";
+
 export type SourceId =
   | "remotive"
   | "remoteok"
@@ -10,6 +12,11 @@ export type SourceId =
   | "hh"
   | "linkedin"
   | "djinni"
+  | "hackernews"
+  | "landingjobs"
+  | "enbek"
+  | "jobspresso"
+  | "nodesk"
   | "getmatch"
   | "ats"
   | "cryptojobslist"
@@ -70,12 +77,15 @@ export interface Job {
   ai?: AiVerdict;
   hiddenBy?: "ai" | "user"; // кто скрыл: правило отсева ИИ или вы
   letter?: CoverLetter;
+  resume?: TailoredResume & { model: string; at: string }; // резюме под эту вакансию
+  interview?: InterviewPrep & { model: string; at: string }; // подготовка к интервью
   enriched?: boolean; // полное описание уже догружено со страницы вакансии
+  dupKey?: string; // ключ группы дублей (та же вакансия на других площадках)
 }
 
 export type RawJob = Omit<
   Job,
-  "id" | "geo" | "firstSeenAt" | "lastSeenAt" | "score" | "matched" | "status" | "ai" | "salaryUsdMonth"
+  "id" | "geo" | "firstSeenAt" | "lastSeenAt" | "score" | "matched" | "status" | "ai" | "salaryUsdMonth" | "dupKey"
 > & { geo?: GeoFit };
 
 export interface Settings {
@@ -116,6 +126,11 @@ export const SOURCE_LABELS: Record<SourceId, string> = {
   hh: "hh.kz / hh.ru",
   linkedin: "LinkedIn",
   djinni: "Djinni",
+  hackernews: "HN · Who is hiring",
+  landingjobs: "Landing.jobs",
+  enbek: "Enbek.kz",
+  jobspresso: "Jobspresso",
+  nodesk: "NoDesk",
   getmatch: "Getmatch",
   ats: "Сайты компаний (Greenhouse, Lever, Ashby)",
   cryptojobslist: "CryptoJobsList",
@@ -143,6 +158,11 @@ export const DEFAULT_SETTINGS: Settings = {
     hh: true,
     linkedin: true,
     djinni: true,
+    hackernews: true,
+    landingjobs: true,
+    enbek: true,
+    jobspresso: true,
+    nodesk: true,
     getmatch: true,
     ats: true,
     cryptojobslist: true,

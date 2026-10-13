@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { dupKey } from "./dupes";
 import { AiVerdict, DEFAULT_SETTINGS, Job, ScanProgress, Settings } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -131,4 +132,13 @@ function migrateModels(old: any): Partial<Settings> {
   if (!Array.isArray(old.aiCustomModels) && typeof old.aiCustomModel === "string" && old.aiCustomModel)
     out.aiCustomModels = [old.aiCustomModel];
   return out;
+}
+
+/** Ключ группы дублей; вычисляется один раз и хранится в вакансии */
+export function jobDupKey(j: Job): string {
+  if (!j.dupKey) {
+    j.dupKey = dupKey(j);
+    save();
+  }
+  return j.dupKey;
 }

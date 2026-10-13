@@ -178,11 +178,7 @@ export function llmFor(s: Settings): Llm {
         ...(s.aiBuiltinFallback || !s.aiModels.some((m) => m.trim()) ? FALLBACK_MODELS : []),
       ]),
     ),
-    call: (model, content, maxTokens) =>
-      chat("https://openrouter.ai/api/v1/chat/completions", s.openrouterKey, model, content, maxTokens, {
-        "HTTP-Referer": "http://localhost:3100",
-        "X-Title": "JobSearchTool",
-      }),
+    call: (model, content, maxTokens) => openrouterChat(s.openrouterKey, model, content, maxTokens),
   };
 }
 
@@ -193,6 +189,7 @@ async function chat(
   content: string,
   maxTokens = 1200,
   extra: Record<string, string> = {},
+  body: Record<string, unknown> = {},
 ): Promise<{ text: string; model: string }> {
   const res = await fetch(url, {
     method: "POST",
@@ -206,6 +203,7 @@ async function chat(
       messages: [{ role: "user", content }],
       temperature: 0.2,
       max_tokens: maxTokens,
+      ...body,
     }),
     signal: AbortSignal.timeout(180000),
   });
@@ -213,9 +211,33 @@ async function chat(
   if (!res.ok || data.error) {
     throw new Error(`${model}: ${data.error?.message || `HTTP ${res.status}`}`);
   }
-  const text = data.choices?.[0]?.message?.content;
-  if (!text) throw new Error(`${model}: пустой ответ`);
+  const choice = data.choices?.[0];
+  const text = choice?.message?.content;
+  if (!text) {
+    // «Думающая» модель потратила весь лимит на скрытые рассуждения и не дошла до ответа
+    const reasoningTokens = data.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+    if (choice?.finish_reason === "length" && reasoningTokens > 0) throw new Error(`${model}: пустой ответ (ушло на рассуждения)`);
+    throw new Error(`${model}: пустой ответ`);
+  }
   return { text, model: data.model || model };
+}
+
+/**
+ * OpenRouter: отключаем скрытые рассуждения — иначе думающие модели (Nemotron и др.) тратят весь
+ * лимит токенов на них и возвращают пустой ответ. Если модель не умеет их отключать — повторяем без параметра,
+ * если ответ всё равно упёрся в лимит — даём вдвое больше токенов.
+ */
+async function openrouterChat(key: string, model: string, content: string, maxTokens = 1200) {
+  const url = "https://openrouter.ai/api/v1/chat/completions";
+  const headers = { "HTTP-Referer": "http://localhost:3100", "X-Title": "JobSearchTool" };
+  try {
+    return await chat(url, key, model, content, maxTokens, headers, { reasoning: { enabled: false } });
+  } catch (e: any) {
+    if (/reasoning/i.test(e.message) && !/ушло на рассуждения/.test(e.message))
+      return chat(url, key, model, content, maxTokens, headers);
+    if (/ушло на рассуждения/.test(e.message)) return chat(url, key, model, content, maxTokens * 2, headers);
+    throw e;
+  }
 }
 
 /** Модели иногда отдают пустой ответ или временную ошибку провайдера — даём вторую попытку */
@@ -459,4 +481,144 @@ ${opts.note ? `\nПОЖЕЛАНИЕ КАНДИДАТА К ПИСЬМУ: ${opts.n
     }
   }
   throw new Error(errors.join(" | "));
+}
+
+/** Общий вызов: промпт → JSON с перебором моделей и проверкой результата */
+async function askJson<T>(s: Settings, prompt: string, maxTokens: number, validate: (j: any) => T): Promise<T & { model: string }> {
+  const llm = llmFor(s);
+  const errors: string[] = [];
+  for (const m of llm.models) {
+    try {
+      const { text, model } = await callWithRetry(llm, m, prompt, maxTokens);
+      return { ...validate(extractJson(text)), model };
+    } catch (e: any) {
+      errors.push(`${m}: ${e.message.replace(`${m}: `, "")}`);
+      if (/401|user not found|invalid.*key|no auth/i.test(e.message)) break;
+    }
+  }
+  throw new Error(errors.join(" | "));
+}
+
+const strList = (v: any, n = 12) => (Array.isArray(v) ? v.map((x) => String(x).trim()).filter(Boolean).slice(0, n) : []);
+
+function jobBlock(job: Job) {
+  return `ВАКАНСИЯ: ${job.title} — ${job.company || "компания не указана"}
+Локация: ${job.location}
+${condense(htmlToText(job.description), 6000)}`;
+}
+
+function langRule(lang: "auto" | "ru" | "en") {
+  return lang === "ru"
+    ? "Пиши на русском."
+    : lang === "en"
+      ? "Write in English."
+      : "Пиши на языке текста вакансии (английский — по-английски, русский — по-русски, другой язык — по-английски).";
+}
+
+export interface TailoredResume {
+  name: string;
+  headline: string;
+  contacts: string[];
+  summary: string;
+  skills: { group: string; items: string[] }[];
+  experience: { role: string; company: string; period: string; bullets: string[] }[];
+  projects: { name: string; link?: string; bullets: string[] }[];
+  education: string[];
+  languages: string[];
+  changes: string[]; // что и почему переставлено под вакансию
+  lang: string;
+}
+
+/** Резюме под вакансию: переставляет акценты, не добавляя фактов */
+export async function tailorResume(job: Job, s: Settings, lang: "auto" | "ru" | "en") {
+  if (s.profile.trim().length < 40) throw new Error("Заполните резюме в настройках");
+  const p = `Ты — карьерный консультант. Адаптируй резюме кандидата под конкретную вакансию.
+
+ИСХОДНОЕ РЕЗЮМЕ:
+${s.profile.slice(0, 10000)}
+
+${jobBlock(job)}
+
+Правила:
+- ${langRule(lang)}
+- Используй ТОЛЬКО факты из исходного резюме. Не добавляй технологии, опыт, цифры, должности, даты, которых там нет. Можно переформулировать, сокращать, переставлять и группировать.
+- Подними наверх то, что важно для этой вакансии: релевантный опыт и проекты первыми, в каждом пункте — сначала то, что совпадает с требованиями.
+- Навыки сгруппируй, и в каждой группе первыми поставь те, что упомянуты в вакансии. Нерелевантное можно убрать.
+- headline — одна строка под вакансию (роль + ключевой стек), summary — 2–3 предложения.
+- bullets — короткие, с глаголом действия и результатом/масштабом, если он есть в исходнике. 2–5 на позицию.
+- Даты/периоды бери из резюме как есть; если их нет — пустая строка.
+- changes — 3–5 коротких пунктов ПО-РУССКИ для кандидата: что ты поднял/убрал и почему.
+
+Ответь СТРОГО JSON без markdown:
+{"lang":"ru|en|…","name":"","headline":"","contacts":["email/telegram/github/сайт из резюме"],"summary":"","skills":[{"group":"","items":[""]}],"experience":[{"role":"","company":"","period":"","bullets":[""]}],"projects":[{"name":"","link":"","bullets":[""]}],"education":[""],"languages":[""],"changes":[""]}`;
+  return askJson<TailoredResume>(s, p, 2600, (j) => {
+    const r: TailoredResume = {
+      lang: String(j.lang ?? lang),
+      name: String(j.name ?? ""),
+      headline: String(j.headline ?? ""),
+      contacts: strList(j.contacts, 6),
+      summary: String(j.summary ?? ""),
+      skills: (Array.isArray(j.skills) ? j.skills : [])
+        .map((g: any) => ({ group: String(g.group ?? ""), items: strList(g.items, 20) }))
+        .filter((g: any) => g.items.length),
+      experience: (Array.isArray(j.experience) ? j.experience : [])
+        .map((e: any) => ({ role: String(e.role ?? ""), company: String(e.company ?? ""), period: String(e.period ?? ""), bullets: strList(e.bullets, 6) }))
+        .filter((e: any) => e.role || e.company),
+      projects: (Array.isArray(j.projects) ? j.projects : [])
+        .map((p: any) => ({ name: String(p.name ?? ""), link: p.link ? String(p.link) : undefined, bullets: strList(p.bullets, 5) }))
+        .filter((p: any) => p.name),
+      education: strList(j.education, 4),
+      languages: strList(j.languages, 6),
+      changes: strList(j.changes, 6),
+    };
+    if (!r.summary && !r.experience.length) throw new Error("резюме получилось пустым");
+    return r;
+  });
+}
+
+export interface InterviewPrep {
+  focus: string; // главное, на чём будут проверять
+  stack: { q: string; hint: string }[];
+  gaps: { q: string; how: string }[];
+  behavioral: { q: string; hint: string }[];
+  ask: string[];
+}
+
+/** Подготовка к интервью: вопросы по стеку, по пробелам кандидата и что спросить у компании */
+export async function interviewPrep(job: Job, s: Settings) {
+  if (s.profile.trim().length < 40) throw new Error("Заполните резюме в настройках");
+  const ai = job.ai && !job.ai.quick ? job.ai : undefined;
+  const p = `Ты готовишь кандидата к собеседованию на конкретную вакансию. Отвечай по-русски; сами вопросы интервьюера можно давать на языке вакансии.
+
+РЕЗЮМЕ КАНДИДАТА:
+${s.profile.slice(0, 8000)}
+
+${jobBlock(job)}
+${ai ? `\nРАЗБОР СООТВЕТСТВИЯ:\nСовпадает: ${ai.pros.join("; ")}\nРиски: ${ai.cons.join("; ")}` : ""}
+
+Подготовь:
+1. focus — 1–2 предложения: на чём, скорее всего, будут проверять.
+2. stack — 6–8 вероятных технических вопросов именно по стеку и задачам этой вакансии (не общие). hint — что важно сказать, со ссылкой на опыт кандидата из резюме, если он есть.
+3. gaps — 2–4 неудобных вопроса про пробелы кандидата относительно требований (меньше опыта, нет технологии и т.п.). how — как честно ответить и чем компенсировать, опираясь только на факты из резюме.
+4. behavioral — 3 поведенческих вопроса, типичных для такой роли, с подсказкой, какой случай из резюме рассказать.
+5. ask — 4–6 сильных вопросов кандидата к компании, учитывая удалёнку из Казахстана (часовой пояс, оформление, оплата) и детали вакансии.
+
+Ответь СТРОГО JSON без markdown:
+{"focus":"","stack":[{"q":"","hint":""}],"gaps":[{"q":"","how":""}],"behavioral":[{"q":"","hint":""}],"ask":[""]}`;
+  return askJson<InterviewPrep>(s, p, 2600, (j) => {
+    const pairs = (v: any, a: string, b: string) =>
+      (Array.isArray(v) ? v : [])
+        .map((x: any) => ({ q: String(x.q ?? "").trim(), [b]: String(x[b] ?? x[a] ?? "").trim() }))
+        .filter((x: any) => x.q)
+        .slice(0, 10);
+    const r: InterviewPrep = {
+      focus: String(j.focus ?? ""),
+      stack: pairs(j.stack, "hint", "hint") as any,
+      gaps: pairs(j.gaps, "how", "how") as any,
+      behavioral: pairs(j.behavioral, "hint", "hint") as any,
+      ask: strList(j.ask, 8),
+    };
+    if (!r.stack.length) throw new Error("пустая подготовка");
+    return r;
+  });
 }

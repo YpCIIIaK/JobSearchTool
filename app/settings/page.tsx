@@ -17,6 +17,7 @@ const SOURCE_GROUPS: { title: string; items: { id: SourceId; note: string }[] }[
       { id: "habr", note: "Русскоязычные IT-вакансии с удалёнкой" },
       { id: "getmatch", note: "IT-вакансии с точными форматами и странами" },
       { id: "djinni", note: "Официальная RSS, много удалёнки для СНГ" },
+      { id: "enbek", note: "Госбиржа труда КЗ: IT по городам, зарплаты в тенге" },
     ],
   },
   {
@@ -24,6 +25,10 @@ const SOURCE_GROUPS: { title: string; items: { id: SourceId; note: string }[] }[
     items: [
       { id: "linkedin", note: "Гостевой поиск, без входа в аккаунт" },
       { id: "ats", note: "Напрямую с карьерных страниц компаний" },
+      { id: "hackernews", note: "Ежемесячный тред HN «Who is hiring», официальный API" },
+      { id: "landingjobs", note: "Европа, официальный API, есть вилки" },
+      { id: "jobspresso", note: "Отобранная удалёнка, RSS" },
+      { id: "nodesk", note: "Небольшая доска удалёнки, RSS" },
       { id: "himalayas", note: "Точный список стран — лучший гео-фильтр" },
       { id: "remotive", note: "Удалёнка по миру, есть ограничения по странам" },
       { id: "weworkremotely", note: "Крупнейшая доска удалёнки" },

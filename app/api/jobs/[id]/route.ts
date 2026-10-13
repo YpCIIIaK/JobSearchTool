@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { enrichJob } from "@/lib/enrich";
-import { getJob, updateJob } from "@/lib/store";
+import { allJobs, getJob, jobDupKey, updateJob } from "@/lib/store";
 import { JobStatus } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +24,11 @@ export async function PATCH(req: Request, { params }: Ctx) {
   const current = getJob(id);
   if (body.letterText != null && current?.letter) patch.letter = { ...current.letter, text: body.letterText, edited: true };
   const job = updateJob(id, patch);
+  if (body.status && current) {
+    const key = jobDupKey(current);
+    for (const other of allJobs())
+      if (other.id !== id && jobDupKey(other) === key) updateJob(other.id, { status: patch.status, hiddenBy: patch.hiddenBy });
+  }
   if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json(job);
 }

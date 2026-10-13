@@ -1,3 +1,4 @@
+import { enbekFullDescription } from "./sources/enbek";
 import { habrFullDescription } from "./sources/habr";
 import { hhFullDescription } from "./sources/hh";
 import { greenhouseFullDescription } from "./sources/ats";
@@ -23,6 +24,9 @@ export async function enrichJob(id: string): Promise<Job | undefined> {
     } else if (job.source === "habr" && job.description.length < 1200) {
       const d = await habrFullDescription(job.url);
       if (d) patch = { description: d };
+    } else if (job.source === "enbek") {
+      const d = await enbekFullDescription(job.url);
+      if (d && d.length > job.description.length) patch = { description: d };
     } else if (job.source === "ats" && !job.description) {
       const d = await greenhouseFullDescription(job.url, job.company);
       if (d) patch = { description: d };

@@ -8,6 +8,10 @@ import { himalayas } from "./himalayas";
 import { jobicy } from "./jobicy";
 import { linkedin } from "./linkedin";
 import { djinni } from "./djinni";
+import { enbek } from "./enbek";
+import { hackernews } from "./hackernews";
+import { landingjobs } from "./landingjobs";
+import { jobspresso, nodesk } from "./rssboards";
 import { getmatch } from "./getmatch";
 import { remoteok } from "./remoteok";
 import { remotive } from "./remotive";
@@ -27,6 +31,11 @@ export const SOURCES: Record<SourceId, (s: Settings) => Promise<RawJob[]>> = {
   hh,
   linkedin,
   djinni,
+  hackernews,
+  landingjobs,
+  enbek,
+  jobspresso,
+  nodesk,
   getmatch,
   ats,
   cryptojobslist,

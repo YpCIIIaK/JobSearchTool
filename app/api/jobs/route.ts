@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { profileHash } from "@/lib/ai";
-import { allJobs, deleteJobs, getSettings } from "@/lib/store";
+import { pickRepresentative } from "@/lib/dupes";
+import { allJobs, deleteJobs, getSettings, jobDupKey } from "@/lib/store";
 import { Job, rank } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +14,8 @@ export async function GET(req: Request) {
   const source = sp.get("source") ?? "";
   const geo = sp.get("geo") ?? (s.hideGeoRestricted ? "ok,maybe" : "");
   const minScore = Number(sp.get("minScore") ?? 0);
-  const check = sp.get("check") ?? ""; // done — проверены ИИ, todo — не проверены или проверка устарела
+  const check = sp.get("check") ?? "";
+  const showDupes = sp.get("dupes") === "all"; // по умолчанию дубли с разных площадок схлопываются // done — проверены ИИ, todo — не проверены или проверка устарела
   const sort = sp.get("sort") ?? "rank";
   const salary = sp.get("salary") ?? ""; // with — только с зарплатой, without — только без
 
@@ -49,6 +51,29 @@ export async function GET(req: Request) {
     sort === "date" ? time(b) - time(a) : sort === "salary" ? (b.salaryUsdMonth ?? 0) - (a.salaryUsdMonth ?? 0) : rank(b) - rank(a) || time(b) - time(a),
   );
 
+  // Схлопываем дубли: одна вакансия на нескольких площадках → одна строка со ссылками на копии
+  const copies = new Map<Job, Job[]>();
+  let merged = 0;
+  if (!showDupes) {
+    const groups = new Map<string, Job[]>();
+    for (const j of list) {
+      const k = jobDupKey(j);
+      const g = groups.get(k);
+      if (g) g.push(j);
+      else groups.set(k, [j]);
+    }
+    const keep = new Set<Job>();
+    for (const g of groups.values()) {
+      const rep = g.length > 1 ? pickRepresentative(g, (x) => x.description.length) : g[0];
+      keep.add(rep);
+      if (g.length > 1) {
+        copies.set(rep, g.filter((x) => x !== rep));
+        merged += g.length - 1;
+      }
+    }
+    list = list.filter((j) => keep.has(j));
+  }
+
   const total = list.length;
   list = list.slice(0, 400);
   return NextResponse.json({
@@ -56,7 +81,19 @@ export async function GET(req: Request) {
     counts,
     sources,
     checks,
-    jobs: list.map(({ description, ...rest }) => ({ ...rest, rank: rank(rest as Job), aiState: aiState(rest as Job) })),
+    merged,
+    // Тяжёлые поля нужны только в карточке — в списке их не отдаём
+    jobs: list.map(({ description, letter, resume, interview, ...rest }) => ({
+      ...rest,
+      rank: rank(rest as Job),
+      aiState: aiState(rest as Job),
+      copies: (copies.get(list.find((x) => x.id === rest.id)!) ?? []).map((c) => ({
+        id: c.id,
+        source: c.source,
+        sourceLabel: c.sourceLabel,
+        url: c.url,
+      })),
+    })),
   });
 }
 

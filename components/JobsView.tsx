@@ -4,7 +4,7 @@ import { Job, JobStatus, ScanProgress, SOURCE_LABELS, SourceId } from "@/lib/typ
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SCAN_EVENT, triggerScan } from "./Header";
-import LetterPanel from "./LetterPanel";
+import ApplyPanel from "./ApplyPanel";
 import {
   IconArrowLeft,
   IconCheck,
@@ -27,12 +27,14 @@ import {
 import { Btn, cx, dayBucket, fmtDate, GeoTag, Logo, MatchMeter, Segmented, Switch, timeAgo } from "./ui";
 
 type AiState = "none" | "done" | "stale";
-type ListJob = Omit<Job, "description"> & { rank: number; aiState: AiState };
+type Copy = { id: string; source: string; sourceLabel: string; url: string };
+type ListJob = Omit<Job, "description"> & { rank: number; aiState: AiState; copies: Copy[] };
 interface ListResp {
   total: number;
   counts: Record<JobStatus | "total", number>;
   sources: Record<string, number>;
   checks: Record<AiState, number>;
+  merged: number;
   jobs: ListJob[];
 }
 type Filters = {
@@ -44,6 +46,7 @@ type Filters = {
   sort: "rank" | "date" | "salary";
   check: "" | "done" | "todo";
   salary: "" | "with" | "without";
+  mergeDupes: boolean;
 };
 
 const STATUS_TABS: { id: string; label: string; key?: JobStatus }[] = [
@@ -70,6 +73,7 @@ export default function JobsView() {
     sort: "rank",
     check: "",
     salary: "",
+    mergeDupes: true,
   });
   const [data, setData] = useState<ListResp | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
@@ -108,6 +112,7 @@ export default function JobsView() {
       sort: filters.sort,
       check: filters.check,
       salary: filters.salary,
+      dupes: filters.mergeDupes ? "" : "all",
     });
     const r = await fetch(`/api/jobs?${p}`);
     setData(await r.json());
@@ -290,6 +295,7 @@ export default function JobsView() {
       f={f}
       sources={data?.sources ?? {}}
       checks={data?.checks}
+      merged={data?.merged}
       onReset={() => f({ source: "", geo: "ok,maybe", minScore: 0, check: "", salary: "" })}
       activeCount={activeFilters}
     />
@@ -424,7 +430,8 @@ export default function JobsView() {
             <Detail
               job={detail}
               stale={jobs.find((j) => j.id === detail.id)?.aiState === "stale"}
-              onLetter={(letter) => patchLocal(detail.id, { letter })}
+              copies={jobs.find((j) => j.id === detail.id)?.copies ?? []}
+              onPatch={(p) => patchLocal(detail.id, p)}
               analyzing={analyzing.has(detail.id)}
               onStatus={(s) => setStatus(detail.id, s)}
               onAnalyze={() => analyze(detail.id)}
@@ -478,6 +485,7 @@ function FilterPanel({
   f,
   sources,
   checks,
+  merged,
   onReset,
   activeCount,
 }: {
@@ -485,6 +493,7 @@ function FilterPanel({
   f: (p: Partial<Filters>) => void;
   sources: Record<string, number>;
   checks?: Record<AiState, number>;
+  merged?: number;
   onReset: () => void;
   activeCount: number;
 }) {
@@ -547,6 +556,17 @@ function FilterPanel({
             {l}
           </Option>
         ))}
+      </FilterGroup>
+
+      <FilterGroup title="Дубли">
+        <div className="pt-1">
+          <Switch
+            checked={filters.mergeDupes}
+            onChange={(v) => f({ mergeDupes: v })}
+            label="Объединять одинаковые вакансии"
+            hint={merged ? `Сейчас объединено: ${merged}` : "С разных площадок — в одну строку"}
+          />
+        </div>
       </FilterGroup>
 
       <FilterGroup title="Зарплата">
@@ -699,6 +719,14 @@ function JobRow({
               {job.aiState === "stale" ? "Проверка устарела" : "ИИ не проверял"}
             </span>
           )}
+          {job.copies.length > 0 && (
+            <span
+              className="text-[11.5px] text-fg-2 bg-raised rounded px-1.5 h-5 leading-5"
+              title={"Та же вакансия: " + job.copies.map((c) => c.sourceLabel).join(", ")}
+            >
+              +{job.copies.length} {plural(job.copies.length, "площадка", "площадки", "площадок")}
+            </span>
+          )}
           <span className="text-[11.5px] text-faint num ml-auto sm:ml-0">
             {job.sourceLabel.replace(/ · (Greenhouse|Lever|Ashby)$/, "")} · {timeAgo(job.postedAt ?? job.firstSeenAt)}
           </span>
@@ -786,7 +814,8 @@ function highlight(html: string, words: string[]): string {
 function Detail({
   job,
   stale,
-  onLetter,
+  copies,
+  onPatch,
   analyzing,
   onStatus,
   onAnalyze,
@@ -794,7 +823,8 @@ function Detail({
 }: {
   job: Job;
   stale?: boolean;
-  onLetter: (l: NonNullable<Job["letter"]>) => void;
+  copies: Copy[];
+  onPatch: (p: Partial<Job>) => void;
   analyzing: boolean;
   onStatus: (s: JobStatus) => void;
   onAnalyze: () => void;
@@ -878,6 +908,22 @@ function Detail({
             >
               Открыть вакансию <IconExternal size={14} />
             </a>
+            {copies.length > 0 && (
+              <div className="w-full flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted order-last pt-1">
+                <span>Также опубликована:</span>
+                {copies.map((c) => (
+                  <a
+                    key={c.id}
+                    href={c.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-fg-2 underline decoration-line-strong underline-offset-2 hover:decoration-fg"
+                  >
+                    {c.sourceLabel} <IconExternal size={11} />
+                  </a>
+                ))}
+              </div>
+            )}
             <Btn
               className={cx("h-9", job.status === "applied" && "!border-good/40 !text-good")}
               onClick={() => onStatus("applied")}
@@ -992,9 +1038,9 @@ function Detail({
           )}
         </div>
 
-        {/* Отклик: письмо и ответы для формы */}
+        {/* Отклик: письмо, резюме под вакансию, подготовка к интервью */}
         <div className="px-5 sm:px-8 pt-5">
-          <LetterPanel job={job} onLetter={onLetter} />
+          <ApplyPanel job={job} onPatch={onPatch} />
         </div>
 
         {/* Описание */}
