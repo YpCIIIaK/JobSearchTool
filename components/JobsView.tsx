@@ -173,17 +173,33 @@ export default function JobsView() {
       const r = await fetch("/api/analyze", { method: "POST", body: JSON.stringify({ ids, force }) });
       const j: { results?: Record<string, Job["ai"]>; error?: string } = await r.json();
       const results = j.results ?? {};
-      for (const [id, ai] of Object.entries(results)) patchLocal(id, { ai });
+      // Сервер скрывает новые вакансии, нарушившие правила отсева, — повторяем это локально
+      const rejectedIds = new Set(
+        Object.entries(results)
+          .filter(([id, ai]) => ai?.reject && (jobs.find((x) => x.id === id)?.status ?? detail?.status) === "new")
+          .map(([id]) => id),
+      );
+      for (const [id, ai] of Object.entries(results))
+        patchLocal(id, rejectedIds.has(id) ? { ai, status: "hidden", hiddenBy: "ai" } : { ai });
       setData(
         (d) =>
           d && {
             ...d,
-            jobs: d.jobs.map((x) => {
-              const ai = results[x.id];
-              return ai ? { ...x, ai, rank: Math.round(ai.score * 0.7 + x.score * 0.3) } : x;
-            }),
+            total: d.total - (filters.status === "hidden" ? 0 : rejectedIds.size),
+            jobs: d.jobs
+              .filter((x) => filters.status === "hidden" || !rejectedIds.has(x.id) || x.id === selected)
+              .map((x) => {
+                const ai = results[x.id];
+                return ai
+                  ? { ...x, ai, rank: Math.round(ai.score * 0.7 + x.score * 0.3), ...(rejectedIds.has(x.id) ? { status: "hidden" as const, hiddenBy: "ai" as const } : {}) }
+                  : x;
+              }),
           },
       );
+      if (rejectedIds.size)
+        notify(
+          `Отсеяно правилами: ${rejectedIds.size} ${plural(rejectedIds.size, "вакансия", "вакансии", "вакансий")} — они во вкладке «Скрытые»`,
+        );
       // Описание могло догрузиться во время анализа — обновим открытую карточку
       if (selected && ids.includes(selected)) fetch(`/api/jobs/${selected}`).then((r) => r.json()).then(setDetail);
       if (j.error) notify(j.error, "error");
@@ -665,10 +681,17 @@ function JobRow({
           </div>
         )}
 
-        {job.ai && (
-          <p className="mt-2.5 text-[13.5px] leading-snug text-fg-2 font-serif italic line-clamp-2">
-            «{job.ai.verdict}»
+        {job.ai?.reject && job.status === "hidden" ? (
+          <p className="mt-2.5 text-[12.5px] leading-snug text-bad flex gap-1.5">
+            <IconEyeOff size={13} className="shrink-0 mt-px" />
+            <span className="line-clamp-2">
+              Отсеяно: {job.ai.reject.rule} — <span className="font-serif italic">«{job.ai.reject.quote}»</span>
+            </span>
           </p>
+        ) : (
+          job.ai && (
+            <p className="mt-2.5 text-[13.5px] leading-snug text-fg-2 font-serif italic line-clamp-2">«{job.ai.verdict}»</p>
+          )
         )}
         {analyzing && (
           <p className="mt-2 text-[12px] text-accent flex items-center gap-1.5">
@@ -826,6 +849,29 @@ function Detail({
             </Btn>
           </div>
         </div>
+
+        {ai?.reject && (
+          <div className="px-5 sm:px-8 pb-5">
+            <div className="rounded-xl border border-bad/25 bg-bad-soft/60 px-4 py-3.5">
+              <div className="flex items-start gap-3">
+                <IconEyeOff size={15} className="text-bad shrink-0 mt-0.5" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-[13.5px] font-medium text-bad">
+                    {job.status === "hidden" ? "Скрыто правилом отсева" : "Нарушает правило отсева"}: {ai.reject.rule}
+                  </p>
+                  <blockquote className="mt-1.5 text-[13.5px] text-fg-2 font-serif italic border-l-2 border-bad/30 pl-3">
+                    «{ai.reject.quote}»
+                  </blockquote>
+                </div>
+                {job.status === "hidden" && (
+                  <Btn size="sm" onClick={() => onStatus("hidden")} className="shrink-0">
+                    <IconUndo size={12} /> Вернуть
+                  </Btn>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Заключение ИИ */}
         <div className="px-5 sm:px-8">

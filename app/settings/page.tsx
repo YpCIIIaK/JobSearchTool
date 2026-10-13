@@ -265,6 +265,17 @@ export default function SettingsPage() {
                 options={["0", "5", "10", "20", "30"].map((v) => ({ value: v, label: v === "0" ? "Выкл" : v }))}
               />
             </Field>
+            <Field
+              label="Правила отсева"
+              hint="Пишите своими словами. ИИ проверяет их при оценке на любом языке вакансии и скрывает нарушителей, только если нашёл в тексте явное подтверждение (оно сохраняется цитатой). Избранное и отклики не скрываются."
+            >
+              <RulesEditor value={s.aiRejectRules} onChange={(v) => up({ aiRejectRules: v })} />
+            </Field>
+            {s.aiRejectRules.length > 0 && s.aiAutoTop === 0 && (
+              <p className="text-[12.5px] text-warn bg-warn-soft rounded-lg px-3 py-2 -mt-2">
+                Правила срабатывают только на оценённых ИИ вакансиях. Включите автоанализ выше или жмите «Оценить топ-10».
+              </p>
+            )}
           </Section>
 
           {/* ── Что ищем ── */}
@@ -513,6 +524,81 @@ function SecretInput({ value, onChange, placeholder }: { value: string; onChange
       >
         {show ? "Скрыть" : "Показать"}
       </button>
+    </div>
+  );
+}
+
+const RULE_EXAMPLES = [
+  "Требуется 3 года опыта и больше",
+  "Нужно знание немецкого или другого языка, кроме русского и английского",
+  "Работа только для граждан или резидентов определённой страны",
+  "Обязателен офис или гибрид хотя бы пару дней в неделю",
+  "Стек в основном PHP, WordPress или 1С",
+  "Оплата только за процент от продаж или без фиксированной ставки",
+];
+
+function RulesEditor({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [text, setText] = useState("");
+  const add = (r: string) => {
+    const t = r.trim();
+    if (t && !value.includes(t)) onChange([...value, t]);
+    setText("");
+  };
+  const unused = RULE_EXAMPLES.filter((e) => !value.includes(e));
+  return (
+    <div className="rounded-xl border border-line-strong/80 bg-panel overflow-hidden">
+      {value.length > 0 && (
+        <ol className="divide-y divide-line">
+          {value.map((r, i) => (
+            <li key={r} className="flex items-start gap-3 px-4 py-2.5 group">
+              <span className="num text-[11.5px] text-bad pt-[3px] w-4">{i + 1}</span>
+              <span className="flex-1 text-[13.5px] leading-snug text-fg pt-px">{r}</span>
+              <button
+                type="button"
+                onClick={() => onChange(value.filter((x) => x !== r))}
+                className="text-[12px] text-faint hover:text-bad opacity-60 group-hover:opacity-100"
+                aria-label={`Удалить правило ${i + 1}`}
+              >
+                Удалить
+              </button>
+            </li>
+          ))}
+        </ol>
+      )}
+      <div className={cx("flex gap-2 p-2", value.length > 0 && "border-t border-line bg-bg/40")}>
+        <input
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add(text);
+            }
+          }}
+          placeholder="Например: требуется больше 3 лет опыта"
+          className="flex-1 min-w-0 h-8 bg-transparent px-2 text-[13px] outline-none placeholder:text-faint"
+        />
+        <Btn size="sm" onClick={() => add(text)} disabled={!text.trim()}>
+          Добавить
+        </Btn>
+      </div>
+      {unused.length > 0 && (
+        <div className="px-4 pb-3 pt-1">
+          <p className="eyebrow mb-2">Примеры</p>
+          <div className="flex flex-wrap gap-1.5">
+            {unused.map((e) => (
+              <button
+                key={e}
+                type="button"
+                onClick={() => add(e)}
+                className="text-[12px] text-muted border border-dashed border-line-strong rounded-md px-2 h-6 hover:text-fg hover:border-faint"
+              >
+                + {e}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

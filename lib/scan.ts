@@ -1,4 +1,4 @@
-import { analyzeIds, cachedVerdict } from "./analyze";
+import { analyzeIds, applyVerdict, cachedVerdict } from "./analyze";
 import { rescore, salaryUsdMonth, scoreJob } from "./score";
 import { SOURCES } from "./sources";
 import { allJobs, getLastScan, getSettings, putJob, save, setLastScan, updateJob } from "./store";
@@ -86,11 +86,14 @@ async function run(enabled: SourceId[]) {
             matched: r.matched,
             salaryUsdMonth: salaryUsdMonth(raw.salary),
             status: "new",
-            ai: cachedVerdict(raw),
+            ai: undefined,
             firstSeenAt: now,
             lastSeenAt: now,
           };
           putJob(job);
+          // Уже оценённая ранее вакансия (например, с другой площадки): берём оценку из кэша
+          const cached = cachedVerdict(raw);
+          if (cached) applyVerdict(jid, cached);
           byId.set(jid, job);
           byKey.set(key, job);
           newIds.push(jid);

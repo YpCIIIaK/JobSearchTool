@@ -17,7 +17,8 @@ export async function GET(_req: Request, { params }: Ctx) {
 export async function PATCH(req: Request, { params }: Ctx) {
   const { id } = await params;
   const body = (await req.json()) as { status?: JobStatus };
-  const job = updateJob(id, body.status ? { status: body.status } : {});
+  // Ручная смена статуса снимает пометку «скрыто ИИ»
+  const job = updateJob(id, body.status ? { status: body.status, hiddenBy: body.status === "hidden" ? "user" : undefined } : {});
   if (!job) return NextResponse.json({ error: "not found" }, { status: 404 });
   return NextResponse.json(job);
 }

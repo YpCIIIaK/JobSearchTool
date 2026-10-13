@@ -31,6 +31,7 @@ export interface AiVerdict {
   model: string;
   at: string;
   profileHash?: string; // для кэша: оценка актуальна, пока не поменялось резюме
+  reject?: { rule: string; quote: string }; // нарушенное правило отсева и цитата-доказательство из вакансии
 }
 
 export interface Job {
@@ -55,6 +56,7 @@ export interface Job {
   matched: string[];
   status: JobStatus;
   ai?: AiVerdict;
+  hiddenBy?: "ai" | "user"; // кто скрыл: правило отсева ИИ или вы
   enriched?: boolean; // полное описание уже догружено со страницы вакансии
 }
 
@@ -80,6 +82,7 @@ export interface Settings {
   aiModel: string;
   profile: string; // резюме / о себе для ИИ
   aiAutoTop: number; // сколько лучших анализировать автоматически после скана
+  aiRejectRules: string[]; // правила отсева своими словами: ИИ скрывает вакансию, если нашёл нарушение
   language: "ru" | "en";
 }
 
@@ -143,6 +146,7 @@ export const DEFAULT_SETTINGS: Settings = {
   aiModel: "openrouter/free",
   profile: "",
   aiAutoTop: 0,
+  aiRejectRules: [],
   language: "ru",
 };
 
